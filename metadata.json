@@ -1,0 +1,6 @@
+{
+  "name": "Chakkra Clinical Document Engine",
+  "description": "Structured Clinical Document Intelligence & Automation Platform for Radiology, Pathology, LIS/RIS, FHIR R4 interoperability, and AI drafting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
