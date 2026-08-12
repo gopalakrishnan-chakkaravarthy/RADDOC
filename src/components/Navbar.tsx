@@ -12,7 +12,10 @@ import {
   Sparkles,
   Layers,
   Menu,
-  X
+  X,
+  Database,
+  FlaskConical,
+  RefreshCw
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -22,6 +25,10 @@ interface NavbarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
   reportStatus?: string;
+  activeDocument?: any;
+  onOpenPdfModal?: () => void;
+  dataSourceMode?: { useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean };
+  onToggleDataSource?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,7 +37,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectTenant,
   activeTab,
   setActiveTab,
-  reportStatus
+  reportStatus,
+  dataSourceMode,
+  onToggleDataSource
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -48,6 +57,8 @@ export const Navbar: React.FC<NavbarProps> = ({
     setActiveTab(id);
     setMobileMenuOpen(false);
   };
+
+  const isDb = dataSourceMode?.useDatabaseData || dataSourceMode?.dataSource === 'DATABASE';
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-xl">
@@ -69,8 +80,33 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         </div>
 
-        {/* Right Section: Tenant Switcher, Badges & Mobile Menu Button */}
+        {/* Right Section: Tenant Switcher, Data Source Toggle, Badges & Mobile Menu Button */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
+          {/* Data Source Flag Switcher Badge */}
+          <button
+            type="button"
+            onClick={onToggleDataSource}
+            title={isDb ? "Click to switch to Sample Data mode" : "Click to switch to PostgreSQL DB mode"}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-semibold border transition-all cursor-pointer ${
+              isDb
+                ? 'bg-purple-500/15 border-purple-500/40 text-purple-300 hover:bg-purple-500/25'
+                : 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+            }`}
+          >
+            {isDb ? (
+              <>
+                <Database className="w-3.5 h-3.5 text-purple-400" />
+                <span className="hidden xs:inline">Data Source:</span> DB
+              </>
+            ) : (
+              <>
+                <FlaskConical className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden xs:inline">Data Source:</span> Sample Data
+              </>
+            )}
+            <RefreshCw className="w-3 h-3 opacity-60 ml-0.5" />
+          </button>
+
           {/* Tenant Dropdown */}
           <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 shadow-inner max-w-[130px] sm:max-w-xs">
             <Building2 className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />

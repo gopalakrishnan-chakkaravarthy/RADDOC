@@ -4,6 +4,8 @@ import { createServer as createViteServer } from 'vite';
 import { RADIOLOGY_TEMPLATES } from './src/data/templates';
 import { SAMPLE_TENANTS, SAMPLE_PRACTITIONERS, SAMPLE_PATIENTS, HISTORICAL_DOCUMENTS } from './src/data/sampleData';
 import { ClinicalDocument, AuditLogEntry } from './src/types';
+import { dbConfig, getSanitizedDbConfig } from './src/db/config';
+import { loadDocumentsFromSource, testDbConnection } from './src/db/dbClient';
 import {
   generateNarrative,
   generateImpression,
@@ -19,6 +21,9 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
+
+// Active Data Source State Flag
+let useDatabaseDataMode = dbConfig.useDatabaseData;
 
 // In-Memory Database for active workspace state
 let documentsStore: ClinicalDocument[] = [...HISTORICAL_DOCUMENTS];
@@ -67,7 +72,54 @@ app.get('/api/v1/health', (req, res) => {
     service: 'Chakkra Clinical Document Intelligence API',
     version: '1.0.0',
     fhirVersion: 'R4',
+    dataSourceMode: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
+    useDatabaseData: useDatabaseDataMode,
     timestamp: new Date().toISOString()
+  });
+});
+
+// Data Source Flag & Connection Status Endpoint
+app.get('/api/v1/config/data-source', async (req, res) => {
+  let dbConnected = false;
+  if (useDatabaseDataMode) {
+    dbConnected = await testDbConnection();
+  }
+
+  res.json({
+    useDatabaseData: useDatabaseDataMode,
+    dataSource: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
+    dbConnected,
+    config: getSanitizedDbConfig()
+  });
+});
+
+// Toggle Active Data Source Flag Endpoint
+app.post('/api/v1/config/data-source', async (req, res) => {
+  const { useDatabaseData, dataSource } = req.body;
+  if (typeof useDatabaseData === 'boolean') {
+    useDatabaseDataMode = useDatabaseData;
+  } else if (typeof dataSource === 'string') {
+    useDatabaseDataMode = dataSource.toUpperCase() === 'DATABASE';
+  } else {
+    useDatabaseDataMode = !useDatabaseDataMode;
+  }
+
+  console.log(`🔄 Data Source Flag changed to: ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`);
+
+  // Reload documents store using selected data source
+  documentsStore = await loadDocumentsFromSource(useDatabaseDataMode);
+
+  let dbConnected = false;
+  if (useDatabaseDataMode) {
+    dbConnected = await testDbConnection();
+  }
+
+  res.json({
+    message: `Data source switched to ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`,
+    useDatabaseData: useDatabaseDataMode,
+    dataSource: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
+    dbConnected,
+    documentCount: documentsStore.length
   });
 });
 
@@ -464,6 +516,14 @@ app.get('/api/v1/audit-logs', (req, res) => {
 
 // Start Express + Vite
 async function startServer() {
+  console.log(`\n====================================================`);
+  console.log(`⚙️ Starting Chakkra Clinical Intelligence Server`);
+  console.log(`📌 USE_DATABASE_DATA Flag: ${useDatabaseDataMode}`);
+  console.log(`📌 Selected Data Source: ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`);
+  console.log(`====================================================\n`);
+
+  documentsStore = await loadDocumentsFromSource(useDatabaseDataMode);
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

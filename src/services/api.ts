@@ -159,3 +159,28 @@ export async function getAuditLogs(): Promise<AuditLogEntry[]> {
   const data = await res.json();
   return data.logs || [];
 }
+
+export async function getDataSourceConfig(): Promise<{
+  useDatabaseData: boolean;
+  dataSource: 'DATABASE' | 'SAMPLE';
+  dbConnected: boolean;
+  config: any;
+}> {
+  const res = await fetch(`${API_BASE}/config/data-source`);
+  return await res.json();
+}
+
+export async function toggleDataSource(useDatabaseData?: boolean, dataSource?: string): Promise<{
+  message: string;
+  useDatabaseData: boolean;
+  dataSource: 'DATABASE' | 'SAMPLE';
+  dbConnected: boolean;
+  documentCount: number;
+}> {
+  const res = await fetch(`${API_BASE}/config/data-source`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ useDatabaseData, dataSource })
+  });
+  return await res.json();
+}

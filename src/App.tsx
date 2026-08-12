@@ -14,7 +14,9 @@ import {
   signDocument,
   createPractitioner,
   updatePractitioner,
-  deletePractitioner
+  deletePractitioner,
+  getDataSourceConfig,
+  toggleDataSource
 } from './services/api';
 import {
   SAMPLE_TENANTS,
@@ -45,16 +47,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('studio');
   const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
+  const [dataSourceMode, setDataSourceMode] = useState<{ useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean }>({
+    useDatabaseData: false,
+    dataSource: 'SAMPLE',
+    dbConnected: false
+  });
 
   useEffect(() => {
     async function initData() {
       try {
-        const [tenantsData, practData, patData, tmplData, docsData] = await Promise.all([
+        const [tenantsData, practData, patData, tmplData, docsData, dsConfig] = await Promise.all([
           getTenants().catch(() => SAMPLE_TENANTS),
           getPractitioners().catch(() => SAMPLE_PRACTITIONERS),
           getPatients().catch(() => SAMPLE_PATIENTS),
           getTemplates().catch(() => RADIOLOGY_TEMPLATES),
-          getDocuments().catch(() => HISTORICAL_DOCUMENTS)
+          getDocuments().catch(() => HISTORICAL_DOCUMENTS),
+          getDataSourceConfig().catch(() => ({ useDatabaseData: false, dataSource: 'SAMPLE' as const, dbConnected: false, config: {} }))
         ]);
 
         if (tenantsData && tenantsData.length > 0) {
@@ -68,6 +76,13 @@ export default function App() {
           setDocuments(docsData);
           setActiveDocument(docsData[0]);
         }
+        if (dsConfig) {
+          setDataSourceMode({
+            useDatabaseData: dsConfig.useDatabaseData,
+            dataSource: dsConfig.dataSource,
+            dbConnected: dsConfig.dbConnected
+          });
+        }
       } catch (err) {
         console.warn('API initialization warning, using offline fallback schema:', err);
       } finally {
@@ -77,6 +92,29 @@ export default function App() {
 
     initData();
   }, []);
+
+  const handleToggleDataSource = async () => {
+    try {
+      setLoading(true);
+      const res = await toggleDataSource();
+      setDataSourceMode({
+        useDatabaseData: res.useDatabaseData,
+        dataSource: res.dataSource,
+        dbConnected: res.dbConnected
+      });
+
+      // Reload fresh documents after data source toggle
+      const freshDocs = await getDocuments();
+      if (freshDocs && freshDocs.length > 0) {
+        setDocuments(freshDocs);
+        setActiveDocument(freshDocs[0]);
+      }
+    } catch (err) {
+      console.error('Failed to toggle data source mode:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSelectTenant = (tenant: HospitalTenant) => {
     setSelectedTenant(tenant);
@@ -235,6 +273,8 @@ export default function App() {
         setActiveTab={setActiveTab}
         activeDocument={activeDocument}
         onOpenPdfModal={() => setShowPdfModal(true)}
+        dataSourceMode={dataSourceMode}
+        onToggleDataSource={handleToggleDataSource}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
