@@ -71,7 +71,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="font-bold text-base sm:text-lg tracking-tight text-white truncate">Chakkra</span>
+              <span className="font-bold text-base sm:text-lg tracking-tight text-white truncate">Chakkra RADDOC - AI Assisted Document Generator</span>
               <span className="hidden xs:inline-flex text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium border border-cyan-500/30 whitespace-nowrap">
                 Clinical Engine
               </span>
@@ -87,11 +87,10 @@ export const Navbar: React.FC<NavbarProps> = ({
             type="button"
             onClick={onToggleDataSource}
             title={isDb ? "Click to switch to Sample Data mode" : "Click to switch to PostgreSQL DB mode"}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-semibold border transition-all cursor-pointer ${
-              isDb
-                ? 'bg-purple-500/15 border-purple-500/40 text-purple-300 hover:bg-purple-500/25'
-                : 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-            }`}
+            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md font-semibold border transition-all cursor-pointer ${isDb
+              ? 'bg-purple-500/15 border-purple-500/40 text-purple-300 hover:bg-purple-500/25'
+              : 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
+              }`}
           >
             {isDb ? (
               <>
@@ -160,11 +159,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium text-xs transition-all whitespace-nowrap cursor-pointer flex-shrink-0 ${
-                  isActive
-                    ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 font-semibold'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                }`}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium text-xs transition-all whitespace-nowrap cursor-pointer flex-shrink-0 ${isActive
+                  ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 font-semibold'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
+                  }`}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
                 <span>{item.label}</span>
@@ -188,11 +186,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer min-h-[44px] ${
-                  isActive
-                    ? 'bg-cyan-600 text-white font-semibold shadow-md shadow-cyan-600/30'
-                    : 'text-slate-300 hover:text-white hover:bg-slate-900 active:bg-slate-800'
-                }`}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer min-h-[44px] ${isActive
+                  ? 'bg-cyan-600 text-white font-semibold shadow-md shadow-cyan-600/30'
+                  : 'text-slate-300 hover:text-white hover:bg-slate-900 active:bg-slate-800'
+                  }`}
               >
                 <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-cyan-400'}`} />
                 <span className="truncate">{item.label}</span>
