@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ClinicalDocument, TemplateDefinition, Patient, HospitalTenant } from '../types';
-import { createDocument } from '../services/api';
+import { createDocument, createPatient } from '../services/api';
 import { Layers, Plus, Stethoscope, Search, Calendar, ChevronRight, User, ShieldCheck } from 'lucide-react';
 
 interface ClinicalQueueProps {
@@ -50,15 +50,15 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
       
       let patient: Patient;
       if (patientMode === 'new') {
-        patient = {
-          id: `pat-${Date.now()}`,
+        const createdPatient = await createPatient({
           patientId: `PAT-2026-${Math.floor(1000 + Math.random() * 9000)}`,
           name: newPatientName.trim() || 'New Patient',
           age: typeof newPatientAge === 'number' ? newPatientAge : 40,
           gender: newPatientGender,
           phone: newPatientPhone.trim() || undefined,
           dob: newPatientDob || undefined
-        };
+        });
+        patient = createdPatient;
       } else {
         patient = patients.find(p => p.id === selectedPatientId) || patients[0];
       }
@@ -90,6 +90,7 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
       setIsCreating(false);
     }
   };
+
 
   return (
     <div className="space-y-6">

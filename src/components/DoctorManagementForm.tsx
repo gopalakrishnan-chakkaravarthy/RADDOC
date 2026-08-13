@@ -14,7 +14,9 @@ import {
   Plus,
   X,
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  Database,
+  Loader2
 } from 'lucide-react';
 
 interface DoctorManagementFormProps {
@@ -139,9 +141,14 @@ export const DoctorManagementForm: React.FC<DoctorManagementFormProps> = ({
             <Stethoscope className="w-4 h-4" />
             Radiologist & Consultant Directory
           </div>
-          <h2 className="text-xl font-bold text-white">Doctors & Signing Practitioners Registry</h2>
+          <h2 className="text-xl font-bold text-white flex items-center gap-2">
+            <span>Doctors & Signing Practitioners Registry</span>
+            <span className="text-[11px] font-mono bg-purple-950 text-purple-300 border border-purple-500/40 px-2.5 py-0.5 rounded-full flex items-center gap-1 font-normal">
+              <Database className="w-3 h-3 text-purple-400" /> PostgreSQL DB
+            </span>
+          </h2>
           <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-            Manage radiologist accounts, medical council registration credentials, qualifications, and digital signature credentials used for approving and signing clinical diagnostic reports.
+            Manage radiologist accounts stored directly in the PostgreSQL database (<span className="text-purple-400 font-mono">practitioners</span> table). Credentials and digital signatures sync for report approvals.
           </p>
         </div>
 
@@ -186,9 +193,16 @@ export const DoctorManagementForm: React.FC<DoctorManagementFormProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-2 bg-cyan-50 text-cyan-800 px-3 py-1.5 rounded-xl border border-cyan-200 font-semibold text-xs">
-          <UserCheck className="w-4 h-4 text-cyan-600" />
-          <span>Total Doctors Registered: {practitioners.length}</span>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-purple-50 text-purple-800 px-3 py-1.5 rounded-xl border border-purple-200 font-semibold text-xs font-mono">
+            <Database className="w-3.5 h-3.5 text-purple-600" />
+            <span>Table: practitioners</span>
+          </div>
+
+          <div className="flex items-center gap-2 bg-cyan-50 text-cyan-800 px-3 py-1.5 rounded-xl border border-cyan-200 font-semibold text-xs">
+            <UserCheck className="w-4 h-4 text-cyan-600" />
+            <span>Total Doctors Registered: {practitioners.length}</span>
+          </div>
         </div>
       </div>
 

@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ClinicalDocument, HospitalTenant } from '../types';
-import { Printer, Download, CheckCircle2, ShieldCheck, X, FileText } from 'lucide-react';
+import { downloadReportPdf, printReportPdf } from '../services/pdfGenerator';
+import { Printer, Download, CheckCircle2, ShieldCheck, X, FileText, FileCode } from 'lucide-react';
 
 interface PdfReportPreviewProps {
   document: ClinicalDocument;
@@ -12,102 +13,11 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
   const reportContentRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    try {
-      window.print();
-    } catch (e) {
-      // Fallback print via iframe if top-level window.print() is restricted
-      printViaHiddenIframe();
-    }
-  };
-
-  const printViaHiddenIframe = () => {
-    const reportHtml = reportContentRef.current?.innerHTML || '';
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed';
-    iframe.style.right = '0';
-    iframe.style.bottom = '0';
-    iframe.style.width = '0';
-    iframe.style.height = '0';
-    iframe.style.border = '0';
-    document.body.appendChild(iframe);
-
-    const docObj = iframe.contentWindow?.document;
-    if (docObj) {
-      docObj.open();
-      docObj.write(`
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <title>${doc?.patient?.name || 'Patient'}_Radiology_Report</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-            <style>
-              body { font-family: sans-serif; padding: 20px; color: #000; background: #fff; }
-              @page { margin: 15mm; size: auto; }
-            </style>
-          </head>
-          <body>
-            <div>${reportHtml}</div>
-            <script>
-              window.onload = function() {
-                window.print();
-              };
-            </script>
-          </body>
-        </html>
-      `);
-      docObj.close();
-    }
-
-    setTimeout(() => {
-      document.body.removeChild(iframe);
-    }, 2000);
+    printReportPdf(doc, tenant);
   };
 
   const handleDownloadFile = () => {
-    const reportHtml = reportContentRef.current?.innerHTML || '';
-    const patientName = (doc?.patient?.name || 'Patient').replace(/\s+/g, '_');
-    const uhid = doc?.patient?.patientId || 'UHID';
-    const fileName = `${patientName}_${uhid}_Radiology_Report.html`;
-
-    const fullDoc = `
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>${doc?.patient?.name || 'Patient'} - Radiology Clinical Report</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #f8fafc; padding: 20px; }
-    .report-container { max-width: 900px; margin: 0 auto; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
-    @media print {
-      body { background: white; padding: 0; }
-      .report-container { box-shadow: none; border: none; padding: 0; }
-      .no-print { display: none !important; }
-    }
-  </style>
-</head>
-<body>
-  <div className="no-print" style="max-width: 900px; margin: 0 auto 20px auto; text-align: right;">
-    <button onclick="window.print()" style="background: #0891b2; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-weight: bold; cursor: pointer;">
-      Print / Save as PDF
-    </button>
-  </div>
-  <div class="report-container">
-    ${reportHtml}
-  </div>
-</body>
-</html>
-    `;
-
-    const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    downloadReportPdf(doc, tenant);
   };
 
   return (

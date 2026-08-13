@@ -2,20 +2,70 @@ import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefini
 
 export const API_BASE = '/api/v1';
 
+// Global API Request Listener State Tracker
+type ApiStateListener = (state: { activeRequests: number; isLoading: boolean }) => void;
+const listeners: Set<ApiStateListener> = new Set();
+let activeRequestsCount = 0;
+
+export function subscribeApiState(listener: ApiStateListener) {
+  listeners.add(listener);
+  listener({ activeRequests: activeRequestsCount, isLoading: activeRequestsCount > 0 });
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function notifyListeners() {
+  const state = { activeRequests: activeRequestsCount, isLoading: activeRequestsCount > 0 };
+  listeners.forEach(l => l(state));
+}
+
+async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  activeRequestsCount++;
+  notifyListeners();
+  try {
+    const response = await fetch(input, init);
+    return response;
+  } finally {
+    activeRequestsCount = Math.max(0, activeRequestsCount - 1);
+    notifyListeners();
+  }
+}
+
 export async function getTenants(): Promise<HospitalTenant[]> {
-  const res = await fetch(`${API_BASE}/tenants`);
+  const res = await apiFetch(`${API_BASE}/tenants`);
   const data = await res.json();
   return data.tenants || [];
 }
 
+export async function createTenant(payload: Partial<HospitalTenant>): Promise<HospitalTenant> {
+  const res = await apiFetch(`${API_BASE}/tenants`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  return data.tenant;
+}
+
+export async function updateTenant(id: string, payload: Partial<HospitalTenant>): Promise<HospitalTenant> {
+  const res = await apiFetch(`${API_BASE}/tenants/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  return data.tenant;
+}
+
 export async function getPractitioners(): Promise<Practitioner[]> {
-  const res = await fetch(`${API_BASE}/practitioners`);
+  const res = await apiFetch(`${API_BASE}/practitioners`);
   const data = await res.json();
   return data.practitioners || [];
 }
 
 export async function createPractitioner(payload: Partial<Practitioner>): Promise<Practitioner> {
-  const res = await fetch(`${API_BASE}/practitioners`, {
+  const res = await apiFetch(`${API_BASE}/practitioners`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -25,7 +75,7 @@ export async function createPractitioner(payload: Partial<Practitioner>): Promis
 }
 
 export async function updatePractitioner(id: string, payload: Partial<Practitioner>): Promise<Practitioner> {
-  const res = await fetch(`${API_BASE}/practitioners/${id}`, {
+  const res = await apiFetch(`${API_BASE}/practitioners/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -35,7 +85,7 @@ export async function updatePractitioner(id: string, payload: Partial<Practition
 }
 
 export async function deletePractitioner(id: string): Promise<boolean> {
-  const res = await fetch(`${API_BASE}/practitioners/${id}`, {
+  const res = await apiFetch(`${API_BASE}/practitioners/${id}`, {
     method: 'DELETE'
   });
   const data = await res.json();
@@ -43,33 +93,61 @@ export async function deletePractitioner(id: string): Promise<boolean> {
 }
 
 export async function getPatients(): Promise<Patient[]> {
-  const res = await fetch(`${API_BASE}/patients`);
+  const res = await apiFetch(`${API_BASE}/patients`);
   const data = await res.json();
   return data.patients || [];
 }
 
+export async function createPatient(payload: Partial<Patient>): Promise<Patient> {
+  const res = await apiFetch(`${API_BASE}/patients`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  return data.patient;
+}
+
+export async function updatePatient(id: string, payload: Partial<Patient>): Promise<Patient> {
+  const res = await apiFetch(`${API_BASE}/patients/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  return data.patient;
+}
+
+export async function deletePatient(id: string): Promise<boolean> {
+  const res = await apiFetch(`${API_BASE}/patients/${id}`, {
+    method: 'DELETE'
+  });
+  const data = await res.json();
+  return !!data.success;
+}
+
 export async function getTemplates(modality?: string): Promise<TemplateDefinition[]> {
   const url = modality ? `${API_BASE}/templates?modality=${modality}` : `${API_BASE}/templates`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   const data = await res.json();
   return data.templates || [];
 }
 
 export async function getDocuments(tenantId?: string): Promise<ClinicalDocument[]> {
   const url = tenantId ? `${API_BASE}/documents?tenantId=${tenantId}` : `${API_BASE}/documents`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   const data = await res.json();
   return data.documents || [];
 }
 
 export async function getDocumentById(id: string): Promise<ClinicalDocument> {
-  const res = await fetch(`${API_BASE}/documents/${id}`);
+  const res = await apiFetch(`${API_BASE}/documents/${id}`);
   const data = await res.json();
   return data.document;
 }
 
 export async function createDocument(payload: Partial<ClinicalDocument>): Promise<ClinicalDocument> {
-  const res = await fetch(`${API_BASE}/documents`, {
+  const res = await apiFetch(`${API_BASE}/documents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -79,7 +157,7 @@ export async function createDocument(payload: Partial<ClinicalDocument>): Promis
 }
 
 export async function updateDocument(id: string, payload: Partial<ClinicalDocument>): Promise<ClinicalDocument> {
-  const res = await fetch(`${API_BASE}/documents/${id}`, {
+  const res = await apiFetch(`${API_BASE}/documents/${id}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -89,7 +167,7 @@ export async function updateDocument(id: string, payload: Partial<ClinicalDocume
 }
 
 export async function triggerAIGeneration(id: string): Promise<{ document: ClinicalDocument; aiResults: any }> {
-  const res = await fetch(`${API_BASE}/documents/${id}/generate`, {
+  const res = await apiFetch(`${API_BASE}/documents/${id}/generate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   });
@@ -97,8 +175,17 @@ export async function triggerAIGeneration(id: string): Promise<{ document: Clini
   return data;
 }
 
+export async function runComparativeAnalysis(id: string, previousDocumentId: string): Promise<{ document: ClinicalDocument; comparativeAnalysis: any }> {
+  const res = await apiFetch(`${API_BASE}/documents/${id}/compare`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ previousDocumentId })
+  });
+  return await res.json();
+}
+
 export async function validateDocument(id: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/documents/${id}/validate`, {
+  const res = await apiFetch(`${API_BASE}/documents/${id}/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' }
   });
@@ -106,7 +193,7 @@ export async function validateDocument(id: string): Promise<any> {
 }
 
 export async function approveDocument(id: string, practitioner?: Practitioner): Promise<ClinicalDocument> {
-  const res = await fetch(`${API_BASE}/documents/${id}/approve`, {
+  const res = await apiFetch(`${API_BASE}/documents/${id}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ practitioner })
@@ -116,7 +203,7 @@ export async function approveDocument(id: string, practitioner?: Practitioner): 
 }
 
 export async function signDocument(id: string, practitioner?: Practitioner, signatureImage?: string): Promise<ClinicalDocument> {
-  const res = await fetch(`${API_BASE}/documents/${id}/sign`, {
+  const res = await apiFetch(`${API_BASE}/documents/${id}/sign`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ practitioner, signatureImage })
@@ -126,12 +213,12 @@ export async function signDocument(id: string, practitioner?: Practitioner, sign
 }
 
 export async function getFHIRBundle(id: string): Promise<any> {
-  const res = await fetch(`${API_BASE}/documents/${id}/fhir`);
+  const res = await apiFetch(`${API_BASE}/documents/${id}/fhir`);
   return await res.json();
 }
 
 export async function parseVoiceDictation(dictationText: string, templateId: string): Promise<Record<string, any>> {
-  const res = await fetch(`${API_BASE}/voice/parse`, {
+  const res = await apiFetch(`${API_BASE}/voice/parse`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dictationText, templateId })
@@ -146,7 +233,7 @@ export async function sendCoPilotChat(payload: { message: string; document: Clin
   suggestedNarrative?: string;
   suggestedImpression?: string[];
 }> {
-  const res = await fetch(`${API_BASE}/chat`, {
+  const res = await apiFetch(`${API_BASE}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
@@ -155,7 +242,7 @@ export async function sendCoPilotChat(payload: { message: string; document: Clin
 }
 
 export async function getAuditLogs(): Promise<AuditLogEntry[]> {
-  const res = await fetch(`${API_BASE}/audit-logs`);
+  const res = await apiFetch(`${API_BASE}/audit-logs`);
   const data = await res.json();
   return data.logs || [];
 }
@@ -166,7 +253,7 @@ export async function getDataSourceConfig(): Promise<{
   dbConnected: boolean;
   config: any;
 }> {
-  const res = await fetch(`${API_BASE}/config/data-source`);
+  const res = await apiFetch(`${API_BASE}/config/data-source`);
   return await res.json();
 }
 
@@ -177,7 +264,7 @@ export async function toggleDataSource(useDatabaseData?: boolean, dataSource?: s
   dbConnected: boolean;
   documentCount: number;
 }> {
-  const res = await fetch(`${API_BASE}/config/data-source`, {
+  const res = await apiFetch(`${API_BASE}/config/data-source`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ useDatabaseData, dataSource })

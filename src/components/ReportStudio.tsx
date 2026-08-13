@@ -6,39 +6,32 @@ import {
   validateDocument,
   approveDocument,
   signDocument,
-  parseVoiceDictation,
   updateDocument,
-  sendCoPilotChat
+  sendCoPilotChat,
+  updatePatient,
+  createPatient
 } from '../services/api';
 import {
   Sparkles,
   CheckCircle2,
-  AlertTriangle,
   FileCheck,
   Printer,
-  Mic,
-  MicOff,
   ShieldCheck,
   ChevronRight,
-  Layers,
   Info,
-  RefreshCw,
   Lock,
   Edit3,
   User,
   FileText,
   Activity,
   Save,
-  Download,
   Brain,
   CheckSquare,
-  FileCode,
-  Key,
   BookOpen,
   Send,
-  MessageSquare,
   Sliders,
-  AlertCircle
+  Database,
+  ChevronLeft
 } from 'lucide-react';
 
 interface ReportStudioProps {
@@ -60,7 +53,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
 }) => {
   // Active workflow step (1 to 11)
   const [activeStep, setActiveStep] = useState<number>(3); // Default to Step 3 (Structured measurements)
-  
+
   // Interactive Chat & Voice RAG State
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [chatInput, setChatInput] = useState('');
@@ -229,8 +222,23 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
     await updateDocument(doc.id, { observations: updatedObs });
   };
 
+  // Helper to persist patient demographic updates directly into PostgreSQL `patients` table
+  const savePatientToDb = async (patient: Patient) => {
+    try {
+      if (patient.id) {
+        await updatePatient(patient.id, patient);
+      } else {
+        const created = await createPatient(patient);
+        return created;
+      }
+    } catch (err) {
+      console.warn('⚠️ Error persisting patient to DB:', err);
+    }
+    return patient;
+  };
+
   // Handle Patient Demographics Change (Name, Age, Gender, Phone, DOB, etc.)
-  const handlePatientChange = async (field: keyof Patient, value: any) => {
+  const handlePatientChange = (field: keyof Patient, value: any) => {
     const updatedPatient: Patient = {
       ...doc.patient,
       [field]: value
@@ -241,10 +249,9 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
       status: doc.status === 'APPROVED' || doc.status === 'DIGITALLY_SIGNED' ? 'AMENDED' : doc.status
     };
     onDocumentChange(updatedDoc);
-    await updateDocument(doc.id, { patient: updatedPatient });
   };
 
-  // Automatically persist patient metadata to document state and storage when input field loses focus (onBlur)
+  // Automatically persist patient metadata to PostgreSQL DB (patients table & clinical_documents table) when input field loses focus (onBlur)
   const handlePatientBlur = async (field: keyof Patient, value: any) => {
     const updatedPatient: Patient = {
       ...doc.patient,
@@ -256,6 +263,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
       status: doc.status === 'APPROVED' || doc.status === 'DIGITALLY_SIGNED' ? 'AMENDED' : doc.status
     };
     onDocumentChange(updatedDoc);
+    await savePatientToDb(updatedPatient);
     await updateDocument(doc.id, { patient: updatedPatient });
   };
 
@@ -418,11 +426,10 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-bold text-white">{doc.templateName}</h2>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                doc.status === 'DIGITALLY_SIGNED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${doc.status === 'DIGITALLY_SIGNED' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
                 doc.status === 'APPROVED' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/40' :
-                'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-              }`}>
+                  'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                }`}>
                 {doc.status}
               </span>
             </div>
@@ -485,9 +492,56 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
         </div>
       )}
 
-      {/* 11-Step Interactive Visual Stepper Bar */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg overflow-x-auto no-scrollbar">
-        <div className="flex items-center justify-between min-w-[900px] gap-1">
+      {/* 11-Step Interactive Visual Stepper Bar (Mobile & Desktop Responsive - Zero Overflow) */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-3 sm:p-4 shadow-lg space-y-3 w-full max-w-full overflow-hidden">
+        {/* Mobile & Tablet Header Controls */}
+        <div className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 pb-2.5 border-b border-slate-800 w-full max-w-full">
+          {/* Left: Active Step Badge & Title */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="shrink-0 bg-cyan-600 text-white px-2 py-0.5 rounded-full font-mono text-[10px] font-bold">
+              Step {activeStep}/11
+            </span>
+            <span className="truncate text-xs font-bold text-cyan-300 min-w-0">
+              {stepsList.find(s => s.num === activeStep)?.title}
+            </span>
+          </div>
+
+          {/* Right: Quick Jump Select & Chevron Step Controls */}
+          <div className="flex items-center gap-1.5 shrink-0 max-w-full">
+            <select
+              value={activeStep}
+              onChange={(e) => setActiveStep(Number(e.target.value))}
+              className="bg-slate-800 text-cyan-300 border border-slate-700 rounded-lg text-[11px] sm:text-xs font-bold px-2 py-1 max-w-[110px] xs:max-w-[130px] sm:max-w-[180px] truncate focus:outline-none focus:ring-1 focus:ring-cyan-500 cursor-pointer"
+            >
+              {stepsList.map((s) => (
+                <option key={s.num} value={s.num}>
+                  {s.num}. {s.title}
+                </option>
+              ))}
+            </select>
+
+            <button
+              onClick={() => setActiveStep(prev => Math.max(1, prev - 1))}
+              disabled={activeStep === 1}
+              className="shrink-0 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 p-1.5 rounded-lg border border-slate-700 text-xs cursor-pointer active:scale-95 transition-all"
+              title="Previous Step"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              onClick={() => setActiveStep(prev => Math.min(11, prev + 1))}
+              disabled={activeStep === 11}
+              className="shrink-0 bg-slate-800 hover:bg-slate-700 disabled:opacity-30 text-slate-200 p-1.5 rounded-lg border border-slate-700 text-xs cursor-pointer active:scale-95 transition-all"
+              title="Next Step"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Responsive Horizontal Stepper Pills (Touch-scrollable with visible step indicators) */}
+        <div className="flex items-center gap-1.5 overflow-x-auto w-full max-w-full pb-1 pt-0.5 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900 touch-pan-x">
           {stepsList.map((st) => {
             const IconComp = st.icon;
             const isActive = activeStep === st.num;
@@ -497,20 +551,20 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
               <button
                 key={st.num}
                 onClick={() => setActiveStep(st.num)}
-                className={`flex-1 flex flex-col items-center p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                className={`shrink-0 min-w-[78px] max-w-[92px] sm:min-w-[100px] sm:max-w-none lg:flex-1 flex flex-col items-center p-1.5 sm:p-2 rounded-xl border text-center transition-all cursor-pointer overflow-hidden ${
                   isActive
-                    ? 'bg-cyan-600/20 border-cyan-500 text-cyan-300 shadow-lg shadow-cyan-600/10'
+                    ? 'bg-cyan-600/25 border-cyan-500 text-cyan-300 shadow-lg shadow-cyan-600/20 ring-1 ring-cyan-500/50'
                     : isCompleted
-                    ? 'bg-slate-800/60 border-emerald-500/40 text-emerald-300'
-                    : 'bg-slate-800/30 border-slate-800 text-slate-400 hover:bg-slate-800/60'
+                    ? 'bg-slate-800/80 border-emerald-500/40 text-emerald-300 hover:bg-slate-800'
+                    : 'bg-slate-800/40 border-slate-800 text-slate-400 hover:bg-slate-800/70 hover:text-slate-200'
                 }`}
               >
-                <div className="flex items-center gap-1 text-[10px] font-bold uppercase mb-1">
+                <div className="flex items-center gap-1 text-[10px] font-bold uppercase mb-0.5">
                   <span>Step {st.num}</span>
-                  {isCompleted && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+                  {isCompleted && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />}
                 </div>
-                <IconComp className="w-4 h-4 mb-1" />
-                <span className="text-[11px] font-bold line-clamp-1">{st.title}</span>
+                <IconComp className="w-3.5 h-3.5 sm:w-4 sm:h-4 mb-0.5" />
+                <span className="text-[10px] sm:text-[11px] font-bold truncate w-full px-0.5">{st.title}</span>
               </button>
             );
           })}
@@ -519,10 +573,10 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
 
       {/* Main Workspace Layout: Left Column (Current Step View) + Right Column (RAG Voice/Chat Co-Pilot) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         {/* LEFT COLUMN: Active Step Functional Workspace */}
         <div className="lg:col-span-7 space-y-6">
-          
+
           {/* STEP 1: Patient Demographics & Profile (Editable) */}
           {activeStep === 1 && (
             <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm space-y-5">
@@ -533,13 +587,49 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                     1. Patient Demographics & Profile
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Editable patient credentials. Changes sync in real-time with the report and PDF print header.
+                    Editable patient credentials stored directly in PostgreSQL (<span className="text-purple-600 font-mono">patients</span> table).
                   </p>
                 </div>
-                <span className="text-xs font-mono bg-cyan-100 text-cyan-800 px-2.5 py-1 rounded-full font-bold">
-                  UHID: {doc?.patient?.patientId || '--'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] font-medium bg-purple-100 text-purple-800 border border-purple-200 px-2.5 py-1 rounded-full flex items-center gap-1 font-mono">
+                    <Database className="w-3 h-3 text-purple-600" /> DB Active
+                  </span>
+                  <span className="text-xs font-mono bg-cyan-100 text-cyan-800 px-2.5 py-1 rounded-full font-bold">
+                    UHID: {doc?.patient?.patientId || '--'}
+                  </span>
+                </div>
               </div>
+
+              {/* Database Registered Patient Selector Dropdown */}
+              {patients.length > 0 && (
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+                  <div className="flex items-center gap-2 text-slate-700 font-bold">
+                    <Database className="w-4 h-4 text-purple-600" />
+                    <span>Select Patient from PostgreSQL DB:</span>
+                  </div>
+                  <select
+                    value={doc?.patient?.id || ''}
+                    onChange={async (e) => {
+                      const selected = patients.find(p => p.id === e.target.value);
+                      if (selected) {
+                        const updatedDoc: ClinicalDocument = {
+                          ...doc,
+                          patient: selected
+                        };
+                        onDocumentChange(updatedDoc);
+                        await updateDocument(doc.id, { patient: selected });
+                      }
+                    }}
+                    className="bg-white border border-slate-300 rounded-lg px-3 py-1.5 font-semibold text-slate-900 focus:ring-2 focus:ring-cyan-500 focus:outline-none cursor-pointer max-w-xs"
+                  >
+                    {patients.map(p => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.patientId} - {p.gender}, {p.age}y)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 {/* Patient Name */}
@@ -711,11 +801,10 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                         modality: t.modality
                       });
                     }}
-                    className={`p-3.5 rounded-xl border text-left cursor-pointer transition-all ${
-                      doc.templateId === t.id
-                        ? 'bg-cyan-50 border-cyan-500 ring-2 ring-cyan-500/20 shadow-sm'
-                        : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
-                    }`}
+                    className={`p-3.5 rounded-xl border text-left cursor-pointer transition-all ${doc.templateId === t.id
+                      ? 'bg-cyan-50 border-cyan-500 ring-2 ring-cyan-500/20 shadow-sm'
+                      : 'bg-slate-50 border-slate-200 hover:bg-slate-100'
+                      }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] font-bold uppercase font-mono px-2 py-0.5 rounded bg-slate-200 text-slate-700">
@@ -823,18 +912,16 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => handleFieldChange(f.id, true)}
-                                    className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
-                                      currentVal === true ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600'
-                                    }`}
+                                    className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${currentVal === true ? 'bg-red-600 text-white' : 'bg-slate-200 text-slate-600'
+                                      }`}
                                   >
                                     YES
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => handleFieldChange(f.id, false)}
-                                    className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${
-                                      currentVal === false ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
-                                    }`}
+                                    className={`px-3 py-1 rounded-lg text-xs font-bold cursor-pointer ${currentVal === false ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600'
+                                      }`}
                                   >
                                     NO
                                   </button>
@@ -939,9 +1026,8 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
 
               {doc.validation ? (
                 <div className="space-y-3 text-xs">
-                  <div className={`p-3 rounded-xl border font-bold flex items-center gap-2 ${
-                    doc.validation.isValid ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-red-50 text-red-800 border-red-200'
-                  }`}>
+                  <div className={`p-3 rounded-xl border font-bold flex items-center gap-2 ${doc.validation.isValid ? 'bg-emerald-50 text-emerald-800 border-emerald-200' : 'bg-red-50 text-red-800 border-red-200'
+                    }`}>
                     {doc.validation.isValid ? '✅ Report Passed All Rule Engine Checks' : '❌ Validation Issues Require Doctor Review'}
                   </div>
 
@@ -1086,7 +1172,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                 <ShieldCheck className="w-8 h-8" />
               </div>
               <h3 className="text-lg font-bold text-slate-900">11. PKI Digital Signature & Cryptographic Seal</h3>
-              
+
               {doc.digitalSignature ? (
                 <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-xl text-left text-xs space-y-2 max-w-lg mx-auto">
                   <div className="flex items-center justify-between">
@@ -1126,7 +1212,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
         {/* RIGHT COLUMN: Interactive Voice & Chat RAG Co-Pilot Drawer */}
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl flex flex-col h-[740px] overflow-hidden text-white">
-            
+
             {/* Header */}
             <div className="p-3.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -1148,11 +1234,10 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
               <button
                 type="button"
                 onClick={() => setRagEnabled(!ragEnabled)}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border cursor-pointer transition-all flex items-center gap-1.5 ${
-                  ragEnabled
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
-                    : 'bg-slate-800 text-slate-400 border-slate-700'
-                }`}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold border cursor-pointer transition-all flex items-center gap-1.5 ${ragEnabled
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
+                  : 'bg-slate-800 text-slate-400 border-slate-700'
+                  }`}
                 title="Toggle ACR & BI-RADS Retrieval-Augmented Generation context"
               >
                 <BookOpen className="w-3 h-3" />
@@ -1203,11 +1288,10 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                     <span>• {msg.timestamp}</span>
                   </div>
 
-                  <div className={`p-3 rounded-2xl max-w-[90%] leading-relaxed ${
-                    msg.sender === 'doctor'
-                      ? 'bg-cyan-600 text-white rounded-br-none shadow-md'
-                      : 'bg-slate-800 border border-slate-700 text-slate-200 rounded-bl-none shadow'
-                  }`}>
+                  <div className={`p-3 rounded-2xl max-w-[90%] leading-relaxed ${msg.sender === 'doctor'
+                    ? 'bg-cyan-600 text-white rounded-br-none shadow-md'
+                    : 'bg-slate-800 border border-slate-700 text-slate-200 rounded-bl-none shadow'
+                    }`}>
                     {msg.text}
 
                     {msg.ragSources && (

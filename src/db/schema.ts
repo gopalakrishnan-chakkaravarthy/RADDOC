@@ -9,6 +9,7 @@ export interface TenantTable {
   code: string;
   logo_url?: string;
   header_title: string;
+  department?: string;
   address: string;
   phone: string;
   email: string;
@@ -42,6 +43,8 @@ export interface TemplateTable {
   id: string; // Primary Key
   name: string;
   modality: 'US' | 'CT' | 'MRI' | 'XRAY';
+  category?: string;
+  description?: string;
   version: string;
   fields_json: string; // JSON schema of template observation fields
   created_at: string;
@@ -50,9 +53,12 @@ export interface TemplateTable {
 export interface ClinicalDocumentTable {
   id: string; // Primary Key
   tenant_id: string; // FK -> tenants.id
-  patient_id: string; // FK -> patients.id
-  template_id: string; // FK -> templates.id
-  practitioner_id?: string; // FK -> practitioners.id
+  patient_id?: string;
+  patient_json: string;
+  template_id?: string;
+  template_name: string;
+  practitioner_id?: string;
+  practitioner_json?: string;
   modality: string;
   study_date: string;
   accession_number: string;
@@ -61,7 +67,9 @@ export interface ClinicalDocumentTable {
   observations_json: string; // JSON key-value measurements
   findings_text?: string;
   impression_text_json?: string; // JSON array of impression bullet points
-  digital_signature_json?: string; // JSON containing PKI hash, signedAt, signedBy
+  ai_results_json?: string;
+  validation_json?: string;
+  digital_signature_json?: string;
   previous_document_id?: string;
   version: number;
   created_at: string;
@@ -70,7 +78,7 @@ export interface ClinicalDocumentTable {
 
 export interface AuditLogTable {
   id: string; // Primary Key
-  document_id: string; // FK -> clinical_documents.id
+  document_id?: string;
   tenant_id: string;
   actor: string;
   action: string;
@@ -78,7 +86,6 @@ export interface AuditLogTable {
   timestamp: string;
 }
 
-// SQL DDL Schema Strings for Migration Engine
 export const SQL_CREATE_TABLES = `
 -- 1. Tenants Table
 CREATE TABLE IF NOT EXISTS tenants (
@@ -87,6 +94,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   code VARCHAR(64) NOT NULL UNIQUE,
   logo_url TEXT,
   header_title VARCHAR(255) NOT NULL,
+  department VARCHAR(255) DEFAULT 'Department of Radio-Diagnosis & Imaging',
   address TEXT NOT NULL,
   phone VARCHAR(64) NOT NULL,
   email VARCHAR(128) NOT NULL,
@@ -123,7 +131,9 @@ CREATE TABLE IF NOT EXISTS templates (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   modality VARCHAR(16) NOT NULL,
-  version VARCHAR(32) NOT NULL,
+  category VARCHAR(128),
+  description TEXT,
+  version VARCHAR(32) NOT NULL DEFAULT '1.0',
   fields_json JSONB NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -132,17 +142,22 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE TABLE IF NOT EXISTS clinical_documents (
   id VARCHAR(64) PRIMARY KEY,
   tenant_id VARCHAR(64) REFERENCES tenants(id) ON DELETE CASCADE,
-  patient_id VARCHAR(64) REFERENCES patients(id) ON DELETE CASCADE,
-  template_id VARCHAR(64) REFERENCES templates(id),
-  practitioner_id VARCHAR(64) REFERENCES practitioners(id),
+  patient_id VARCHAR(64),
+  patient_json JSONB NOT NULL,
+  template_id VARCHAR(64),
+  template_name VARCHAR(255) NOT NULL,
+  practitioner_id VARCHAR(64),
+  practitioner_json JSONB,
   modality VARCHAR(16) NOT NULL,
   study_date TIMESTAMP WITH TIME ZONE NOT NULL,
   accession_number VARCHAR(64) NOT NULL UNIQUE,
   referring_physician VARCHAR(255) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
   observations_json JSONB DEFAULT '{}'::jsonb,
-  findings_text TEXT,
+  findings_text TEXT DEFAULT '',
   impression_text_json JSONB DEFAULT '[]'::jsonb,
+  ai_results_json JSONB,
+  validation_json JSONB,
   digital_signature_json JSONB,
   previous_document_id VARCHAR(64),
   version INT DEFAULT 1,
@@ -153,7 +168,7 @@ CREATE TABLE IF NOT EXISTS clinical_documents (
 -- 6. Audit Logs Table
 CREATE TABLE IF NOT EXISTS audit_logs (
   id VARCHAR(64) PRIMARY KEY,
-  document_id VARCHAR(64) REFERENCES clinical_documents(id) ON DELETE CASCADE,
+  document_id VARCHAR(64),
   tenant_id VARCHAR(64) REFERENCES tenants(id),
   actor VARCHAR(255) NOT NULL,
   action VARCHAR(64) NOT NULL,

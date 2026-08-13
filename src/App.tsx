@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefinition, Modality } from './types';
 import {
   getTenants,
+  updateTenant,
+  createTenant,
   getPractitioners,
   getPatients,
   getTemplates,
@@ -16,8 +18,10 @@ import {
   updatePractitioner,
   deletePractitioner,
   getDataSourceConfig,
-  toggleDataSource
+  toggleDataSource,
+  runComparativeAnalysis
 } from './services/api';
+import { GlobalHttpLoader } from './components/GlobalHttpLoader';
 import {
   SAMPLE_TENANTS,
   SAMPLE_PRACTITIONERS,
@@ -47,6 +51,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string>('studio');
   const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isComparing, setIsComparing] = useState<boolean>(false);
   const [dataSourceMode, setDataSourceMode] = useState<{ useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean }>({
     useDatabaseData: false,
     dataSource: 'SAMPLE',
@@ -181,6 +186,20 @@ export default function App() {
     }
   };
 
+  const handleRunComparativeAnalysis = async () => {
+    if (!activeDocument || !activeDocument.previousDocumentId) return;
+    try {
+      setIsComparing(true);
+      const res = await runComparativeAnalysis(activeDocument.id, activeDocument.previousDocumentId);
+      setActiveDocument(res.document);
+      setDocuments(prev => prev.map(d => d.id === res.document.id ? res.document : d));
+    } catch (err) {
+      console.error('Comparative Analysis Error:', err);
+    } finally {
+      setIsComparing(false);
+    }
+  };
+
   const handleValidate = async () => {
     if (!activeDocument) return;
     try {
@@ -264,7 +283,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans antialiased">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans antialiased text-slate-800 relative">
+      {/* Global HTTP API Activity Loader */}
+      <GlobalHttpLoader />
+
+      {/* Primary Header & Top Navigation Bar */}
       <Navbar
         tenants={tenants}
         selectedTenant={selectedTenant}
@@ -277,18 +300,25 @@ export default function App() {
         onToggleDataSource={handleToggleDataSource}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+      {/* Main Clinical Intelligence Engine Application Body */}
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {activeTab === 'studio' && activeDocument && (
           <ReportStudio
             document={activeDocument}
-            templates={templates}
+            tenant={selectedTenant}
             practitioners={practitioners}
             patients={patients}
+            templates={templates}
+            historicalDocuments={documents}
             onDocumentChange={(updatedDoc) => {
               setActiveDocument(updatedDoc);
               setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
             }}
-            onOpenPdf={() => setShowPdfModal(true)}
+            onAIGenerate={handleAIGenerate}
+            onValidate={handleValidate}
+            onApprove={handleApprove}
+            onDigitalSign={handleDigitalSign}
+            onOpenPdfPreview={() => setShowPdfModal(true)}
           />
         )}
 
@@ -297,7 +327,6 @@ export default function App() {
             documents={documents}
             patients={patients}
             templates={templates}
-            tenant={selectedTenant}
             activeDocId={activeDocument?.id}
             onSelectDocument={(doc) => {
               setActiveDocument(doc);
@@ -318,8 +347,8 @@ export default function App() {
             onSelectHistorical={(prevId) => {
               handleUpdateDocument({ previousDocumentId: prevId });
             }}
-            onRunComparison={handleAIGenerate}
-            isComparing={false}
+            onRunComparison={handleRunComparativeAnalysis}
+            isComparing={isComparing}
           />
         )}
 
@@ -338,10 +367,28 @@ export default function App() {
         {activeTab === 'settings' && selectedTenant && (
           <HospitalSettings
             tenant={selectedTenant}
+            tenants={tenants}
+            onSelectTenant={handleSelectTenant}
             practitioners={practitioners}
-            onUpdateTenant={(updatedTenant) => {
-              setSelectedTenant(updatedTenant);
-              setTenants(prev => prev.map(t => t.id === updatedTenant.id ? updatedTenant : t));
+            onUpdateTenant={async (updatedTenant) => {
+              try {
+                const saved = await updateTenant(updatedTenant.id, updatedTenant);
+                setSelectedTenant(saved);
+                setTenants(prev => prev.map(t => t.id === saved.id ? saved : t));
+              } catch (err) {
+                console.error('Failed to update tenant in DB:', err);
+                setSelectedTenant(updatedTenant);
+              }
+            }}
+            onAddTenant={async (newTenantData) => {
+              try {
+                const created = await createTenant(newTenantData);
+                setTenants(prev => [...prev, created]);
+                setSelectedTenant(created);
+              } catch (err) {
+                console.error('Failed to add tenant to DB:', err);
+                throw err;
+              }
             }}
             onAddPractitioner={handleAddPractitioner}
             onUpdatePractitioner={handleUpdatePractitioner}

@@ -3,9 +3,32 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { RADIOLOGY_TEMPLATES } from './src/data/templates';
 import { SAMPLE_TENANTS, SAMPLE_PRACTITIONERS, SAMPLE_PATIENTS, HISTORICAL_DOCUMENTS } from './src/data/sampleData';
-import { ClinicalDocument, AuditLogEntry } from './src/types';
+import { ClinicalDocument, AuditLogEntry, Practitioner, HospitalTenant, Patient } from './src/types';
 import { dbConfig, getSanitizedDbConfig } from './src/db/config';
-import { loadDocumentsFromSource, testDbConnection } from './src/db/dbClient';
+import { runMigrations } from './src/db/migrate';
+import { seedDatabase } from './src/db/seed';
+import {
+  getTenantsFromDb,
+  saveTenantToDb,
+  updateTenantInDb,
+  getPractitionersFromDb,
+  createPractitionerInDb,
+  updatePractitionerInDb,
+  deletePractitionerFromDb,
+  getPatientsFromDb,
+  createPatientInDb,
+  updatePatientInDb,
+  deletePatientFromDb,
+  getTemplatesFromDb,
+  saveTemplateToDb,
+  getDocumentsFromDb,
+  getDocumentByIdFromDb,
+  saveDocumentToDb,
+  deleteDocumentFromDb,
+  getAuditLogsFromDb,
+  createAuditLogInDb,
+  testDbConnection
+} from './src/db/dbClient';
 import {
   generateNarrative,
   generateImpression,
@@ -18,47 +41,21 @@ import {
 import { convertToFHIRDiagnosticReport } from './server/fhirEngine';
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT: number = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json({ limit: '10mb' }));
 
-// Active Data Source State Flag
-let useDatabaseDataMode = dbConfig.useDatabaseData;
+// Active Data Source State Flag (Default: true for Database Mode)
+let useDatabaseDataMode = true;
 
-// In-Memory Database for active workspace state
-let documentsStore: ClinicalDocument[] = [...HISTORICAL_DOCUMENTS];
-let practitionersStore = [...SAMPLE_PRACTITIONERS];
-let auditLogsStore: AuditLogEntry[] = [
-  {
-    id: 'log-001',
-    documentId: 'doc-hist-2025-001',
-    timestamp: '2025-08-10T10:30:00.000Z',
-    actor: 'Dr. K. Senthil Kumar, MD',
-    action: 'CREATED',
-    details: 'Ultrasound Whole Abdomen study created from HMS RIS queue.',
-    tenantId: 'tenant-xyz-hospital'
-  },
-  {
-    id: 'log-002',
-    documentId: 'doc-hist-2025-001',
-    timestamp: '2025-08-10T11:45:00.000Z',
-    actor: 'Dr. K. Senthil Kumar, MD',
-    action: 'SIGNED',
-    details: 'Digitally signed report with PKI certificate hash 0x8f2d91a243e8b01c12e5.',
-    tenantId: 'tenant-xyz-hospital'
+async function logAudit(documentId: string, actor: string, action: string, details: string, tenantId: string = 'tenant-xyz-hospital') {
+  if (useDatabaseDataMode) {
+    try {
+      await createAuditLogInDb({ documentId, actor, action, details, tenantId });
+    } catch (err: any) {
+      console.warn('⚠️ Error logging audit to database:', err.message);
+    }
   }
-];
-
-function logAudit(documentId: string, actor: string, action: string, details: string, tenantId: string = 'tenant-xyz-hospital') {
-  auditLogsStore.unshift({
-    id: `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-    documentId,
-    timestamp: new Date().toISOString(),
-    actor,
-    action,
-    details,
-    tenantId
-  });
 }
 
 // ==========================================
@@ -66,7 +63,8 @@ function logAudit(documentId: string, actor: string, action: string, details: st
 // ==========================================
 
 // Health Endpoint
-app.get('/api/v1/health', (req, res) => {
+app.get('/api/v1/health', async (req, res) => {
+  const dbConnected = await testDbConnection();
   res.json({
     status: 'ok',
     service: 'Chakkra Clinical Document Intelligence API',
@@ -74,17 +72,14 @@ app.get('/api/v1/health', (req, res) => {
     fhirVersion: 'R4',
     dataSourceMode: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
     useDatabaseData: useDatabaseDataMode,
+    dbConnected,
     timestamp: new Date().toISOString()
   });
 });
 
 // Data Source Flag & Connection Status Endpoint
 app.get('/api/v1/config/data-source', async (req, res) => {
-  let dbConnected = false;
-  if (useDatabaseDataMode) {
-    dbConnected = await testDbConnection();
-  }
-
+  const dbConnected = await testDbConnection();
   res.json({
     useDatabaseData: useDatabaseDataMode,
     dataSource: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
@@ -106,194 +101,282 @@ app.post('/api/v1/config/data-source', async (req, res) => {
 
   console.log(`🔄 Data Source Flag changed to: ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`);
 
-  // Reload documents store using selected data source
-  documentsStore = await loadDocumentsFromSource(useDatabaseDataMode);
-
-  let dbConnected = false;
-  if (useDatabaseDataMode) {
-    dbConnected = await testDbConnection();
-  }
+  const dbConnected = await testDbConnection();
+  const docs = useDatabaseDataMode ? await getDocumentsFromDb() : HISTORICAL_DOCUMENTS;
 
   res.json({
     message: `Data source switched to ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`,
     useDatabaseData: useDatabaseDataMode,
     dataSource: useDatabaseDataMode ? 'DATABASE' : 'SAMPLE',
     dbConnected,
-    documentCount: documentsStore.length
+    documentCount: docs.length
   });
 });
 
-// Tenants
-app.get('/api/v1/tenants', (req, res) => {
-  res.json({ tenants: SAMPLE_TENANTS });
-});
+// ==========================================
+// TENANTS (HOSPITAL DETAILS) API
+// ==========================================
 
-// Practitioners API
-app.get('/api/v1/practitioners', (req, res) => {
-  res.json({ count: practitionersStore.length, practitioners: practitionersStore });
-});
-
-app.post('/api/v1/practitioners', (req, res) => {
-  const { name, qualification, registrationNo, designation, signatureImage } = req.body;
-  if (!name || !registrationNo) {
-    return res.status(400).json({ error: 'Name and Registration Number are required' });
+app.get('/api/v1/tenants', async (req, res) => {
+  try {
+    const tenants = useDatabaseDataMode ? await getTenantsFromDb() : SAMPLE_TENANTS;
+    res.json({ tenants });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch tenants', message: err.message });
   }
-
-  const newPractitioner = {
-    id: `doc-rad-${Date.now()}`,
-    name,
-    qualification: qualification || 'MD (Radiodiagnosis)',
-    registrationNo,
-    designation: designation || 'Consultant Radiologist',
-    signatureImage: signatureImage || name
-  };
-
-  practitionersStore.push(newPractitioner);
-  res.status(201).json({ practitioner: newPractitioner });
 });
 
-app.put('/api/v1/practitioners/:id', (req, res) => {
-  const index = practitionersStore.findIndex(p => p.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Practitioner not found' });
-  }
-
-  const existing = practitionersStore[index];
-  const updated = {
-    ...existing,
-    ...req.body
-  };
-
-  practitionersStore[index] = updated;
-
-  // Also update practitioner object in existing clinical documents if matched
-  documentsStore = documentsStore.map(doc => {
-    if (doc.practitioner && doc.practitioner.id === updated.id) {
-      return { ...doc, practitioner: updated };
+app.post('/api/v1/tenants', async (req, res) => {
+  try {
+    const tenant: HospitalTenant = req.body;
+    if (!tenant.name || !tenant.code) {
+      return res.status(400).json({ error: 'Tenant Name and Code are required' });
     }
-    return doc;
-  });
-
-  res.json({ practitioner: updated });
-});
-
-app.delete('/api/v1/practitioners/:id', (req, res) => {
-  const index = practitionersStore.findIndex(p => p.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Practitioner not found' });
+    const created = await saveTenantToDb(tenant);
+    res.status(201).json({ tenant: created });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create tenant', message: err.message });
   }
-
-  const removed = practitionersStore.splice(index, 1)[0];
-  res.json({ success: true, removed });
 });
 
-// Patients
-app.get('/api/v1/patients', (req, res) => {
-  res.json({ patients: SAMPLE_PATIENTS });
-});
-
-// Templates API
-app.get('/api/v1/templates', (req, res) => {
-  const { modality } = req.query;
-  let templates = RADIOLOGY_TEMPLATES;
-  if (modality) {
-    templates = templates.filter(t => t.modality === String(modality).toUpperCase());
+app.put('/api/v1/tenants/:id', async (req, res) => {
+  try {
+    const updated = await updateTenantInDb(req.params.id, req.body);
+    res.json({ tenant: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update tenant', message: err.message });
   }
-  res.json({ count: templates.length, templates });
 });
 
-app.get('/api/v1/templates/:id', (req, res) => {
-  const template = RADIOLOGY_TEMPLATES.find(t => t.id === req.params.id);
-  if (!template) {
-    return res.status(404).json({ error: 'Template not found' });
+// ==========================================
+// PRACTITIONERS (DOCTOR DETAILS) API
+// ==========================================
+
+app.get('/api/v1/practitioners', async (req, res) => {
+  try {
+    const practitioners = useDatabaseDataMode ? await getPractitionersFromDb() : SAMPLE_PRACTITIONERS;
+    res.json({ count: practitioners.length, practitioners });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch practitioners', message: err.message });
   }
-  res.json({ template });
 });
 
-// Document Management CRUD
-app.get('/api/v1/documents', (req, res) => {
-  const { tenantId, patientId, status } = req.query;
-  let docs = [...documentsStore];
-  if (tenantId) docs = docs.filter(d => d.tenantId === String(tenantId));
-  if (patientId) docs = docs.filter(d => d.patient.patientId === String(patientId));
-  if (status) docs = docs.filter(d => d.status === String(status));
-  
-  res.json({ count: docs.length, documents: docs });
-});
-
-app.get('/api/v1/documents/:id', (req, res) => {
-  const doc = documentsStore.find(d => d.id === req.params.id);
-  if (!doc) {
-    return res.status(404).json({ error: 'Document not found' });
+app.post('/api/v1/practitioners', async (req, res) => {
+  try {
+    const { name, registrationNo } = req.body;
+    if (!name || !registrationNo) {
+      return res.status(400).json({ error: 'Name and Registration Number are required' });
+    }
+    const created = await createPractitionerInDb(req.body);
+    res.status(201).json({ practitioner: created });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create practitioner', message: err.message });
   }
-  res.json({ document: doc });
 });
 
-app.post('/api/v1/documents', (req, res) => {
-  const { tenantId, patient, templateId, modality, accessionNumber, referringPhysician, observations, previousDocumentId } = req.body;
-  
-  const template = RADIOLOGY_TEMPLATES.find(t => t.id === templateId);
-  const templateName = template ? template.name : 'Radiology Study';
-
-  const newDoc: ClinicalDocument = {
-    id: `doc-${Date.now()}`,
-    tenantId: tenantId || 'tenant-xyz-hospital',
-    patient: patient || SAMPLE_PATIENTS[0],
-    templateId,
-    templateName,
-    modality: modality || 'USG',
-    studyDate: new Date().toISOString(),
-    accessionNumber: accessionNumber || `ACC-${Math.floor(100000 + Math.random() * 900000)}`,
-    referringPhysician: referringPhysician || 'Dr. V. Ramanathan, MD',
-    status: 'DRAFT',
-    observations: observations || {},
-    findingsText: '',
-    impressionText: [],
-    previousDocumentId,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    version: 1
-  };
-
-  documentsStore.unshift(newDoc);
-  logAudit(newDoc.id, 'System API', 'CREATED', `Clinical document created for ${newDoc.patient.name} (${newDoc.templateName}).`, newDoc.tenantId);
-
-  res.status(201).json({ document: newDoc });
-});
-
-// Update Document Observations or Text
-app.put('/api/v1/documents/:id', (req, res) => {
-  const index = documentsStore.findIndex(d => d.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Document not found' });
+app.put('/api/v1/practitioners/:id', async (req, res) => {
+  try {
+    const updated = await updatePractitionerInDb(req.params.id, req.body);
+    res.json({ practitioner: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update practitioner', message: err.message });
   }
+});
 
-  const existing = documentsStore[index];
-  const updated: ClinicalDocument = {
-    ...existing,
-    ...req.body,
-    updatedAt: new Date().toISOString(),
-    version: existing.version + 1
-  };
+app.delete('/api/v1/practitioners/:id', async (req, res) => {
+  try {
+    const success = await deletePractitionerFromDb(req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete practitioner', message: err.message });
+  }
+});
 
-  documentsStore[index] = updated;
-  logAudit(updated.id, updated.practitioner?.name || 'Radiologist', 'EDITED', `Document updated to version ${updated.version}.`, updated.tenantId);
+// ==========================================
+// PATIENTS API
+// ==========================================
 
-  res.json({ document: updated });
+app.get('/api/v1/patients', async (req, res) => {
+  try {
+    const patients = useDatabaseDataMode ? await getPatientsFromDb() : SAMPLE_PATIENTS;
+    res.json({ count: patients.length, patients });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch patients', message: err.message });
+  }
+});
+
+app.post('/api/v1/patients', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Patient Name is required' });
+    }
+    const created = await createPatientInDb(req.body);
+    res.status(201).json({ patient: created });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create patient', message: err.message });
+  }
+});
+
+app.put('/api/v1/patients/:id', async (req, res) => {
+  try {
+    const updated = await updatePatientInDb(req.params.id, req.body);
+    res.json({ patient: updated });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update patient', message: err.message });
+  }
+});
+
+app.delete('/api/v1/patients/:id', async (req, res) => {
+  try {
+    const success = await deletePatientFromDb(req.params.id);
+    res.json({ success });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete patient', message: err.message });
+  }
+});
+
+// ==========================================
+// TEMPLATES API
+// ==========================================
+
+app.get('/api/v1/templates', async (req, res) => {
+  try {
+    const { modality } = req.query;
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb(modality as string) : RADIOLOGY_TEMPLATES;
+    res.json({ count: templates.length, templates });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch templates', message: err.message });
+  }
+});
+
+app.get('/api/v1/templates/:id', async (req, res) => {
+  try {
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const template = templates.find(t => t.id === req.params.id);
+    if (!template) {
+      return res.status(404).json({ error: 'Template not found' });
+    }
+    res.json({ template });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch template', message: err.message });
+  }
+});
+
+// ==========================================
+// CLINICAL DOCUMENTS CRUD API
+// ==========================================
+
+app.get('/api/v1/documents', async (req, res) => {
+  try {
+    const { tenantId, patientId, status } = req.query;
+    const docs = useDatabaseDataMode 
+      ? await getDocumentsFromDb(tenantId as string, patientId as string, status as string)
+      : HISTORICAL_DOCUMENTS;
+    res.json({ count: docs.length, documents: docs });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch documents', message: err.message });
+  }
+});
+
+app.get('/api/v1/documents/:id', async (req, res) => {
+  try {
+    const doc = useDatabaseDataMode
+      ? await getDocumentByIdFromDb(req.params.id)
+      : HISTORICAL_DOCUMENTS.find(d => d.id === req.params.id);
+
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    res.json({ document: doc });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch document', message: err.message });
+  }
+});
+
+app.post('/api/v1/documents', async (req, res) => {
+  try {
+    const { tenantId, patient, templateId, modality, accessionNumber, referringPhysician, observations, previousDocumentId } = req.body;
+    
+    let defaultPatient = patient;
+    if (!defaultPatient && useDatabaseDataMode) {
+      const patients = await getPatientsFromDb();
+      defaultPatient = patients[0] || SAMPLE_PATIENTS[0];
+    }
+
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const template = templates.find(t => t.id === templateId);
+    const templateName = template ? template.name : 'Radiology Study';
+
+    const newDoc: ClinicalDocument = {
+      id: `doc-${Date.now()}`,
+      tenantId: tenantId || 'tenant-xyz-hospital',
+      patient: defaultPatient || SAMPLE_PATIENTS[0],
+      templateId: templateId || 'tpl-us-abdomen-01',
+      templateName,
+      modality: modality || 'USG',
+      studyDate: new Date().toISOString(),
+      accessionNumber: accessionNumber || `ACC-${Math.floor(100000 + Math.random() * 900000)}`,
+      referringPhysician: referringPhysician || 'Dr. V. Ramanathan, MD',
+      status: 'DRAFT',
+      observations: observations || {},
+      findingsText: '',
+      impressionText: [],
+      previousDocumentId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      version: 1
+    };
+
+    const created = useDatabaseDataMode ? await saveDocumentToDb(newDoc) : newDoc;
+    await logAudit(created.id, 'System API', 'CREATED', `Clinical document created for ${created.patient.name} (${created.templateName}).`, created.tenantId);
+
+    res.status(201).json({ document: created });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to create document', message: err.message });
+  }
+});
+
+app.put('/api/v1/documents/:id', async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const existing = useDatabaseDataMode 
+      ? await getDocumentByIdFromDb(docId) 
+      : HISTORICAL_DOCUMENTS.find(d => d.id === docId);
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const updated: ClinicalDocument = {
+      ...existing,
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+      version: existing.version + 1
+    };
+
+    const saved = useDatabaseDataMode ? await saveDocumentToDb(updated) : updated;
+    await logAudit(saved.id, saved.practitioner?.name || 'Radiologist', 'EDITED', `Document updated to version ${saved.version}.`, saved.tenantId);
+
+    res.json({ document: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update document', message: err.message });
+  }
 });
 
 // AI Generation Trigger Endpoint
 app.post('/api/v1/documents/:id/generate', async (req, res) => {
-  const index = documentsStore.findIndex(d => d.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Document not found' });
-  }
-
-  const doc = documentsStore[index];
-  const template = RADIOLOGY_TEMPLATES.find(t => t.id === doc.templateId);
-  const templateName = template ? template.name : doc.templateName;
-
   try {
+    const docId = req.params.id;
+    const doc = useDatabaseDataMode ? await getDocumentByIdFromDb(docId) : HISTORICAL_DOCUMENTS.find(d => d.id === docId);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const template = templates.find(t => t.id === doc.templateId);
+    const templateName = template ? template.name : doc.templateName;
+
     // 1. Generate Narrative Findings
     const findingsText = await generateNarrative(templateName, doc.modality, doc.observations);
     
@@ -309,7 +392,7 @@ app.post('/api/v1/documents/:id/generate', async (req, res) => {
     // 5. Comparison Engine if previous document exists
     let comparativeAnalysis = undefined;
     if (doc.previousDocumentId) {
-      const prevDoc = documentsStore.find(d => d.id === doc.previousDocumentId);
+      const prevDoc = useDatabaseDataMode ? await getDocumentByIdFromDb(doc.previousDocumentId) : HISTORICAL_DOCUMENTS.find(d => d.id === doc.previousDocumentId);
       if (prevDoc) {
         comparativeAnalysis = await compareWithPreviousReport(
           doc.observations,
@@ -335,117 +418,129 @@ app.post('/api/v1/documents/:id/generate', async (req, res) => {
     doc.updatedAt = new Date().toISOString();
     doc.version += 1;
 
-    documentsStore[index] = doc;
-    logAudit(doc.id, 'AI Service Orchestrator', 'AI_DRAFT_GENERATED', 'Generated draft narrative, impressions, consistency audit, and missing info check.', doc.tenantId);
+    const saved = useDatabaseDataMode ? await saveDocumentToDb(doc) : doc;
+    await logAudit(saved.id, 'AI Service Orchestrator', 'AI_DRAFT_GENERATED', 'Generated draft narrative, impressions, consistency audit, and missing info check.', saved.tenantId);
 
-    res.json({ document: doc, aiResults });
+    res.json({ document: saved, aiResults });
   } catch (err: any) {
     res.status(500).json({ error: 'AI generation failed', message: err.message });
   }
 });
 
-// Validation Engine
-app.post('/api/v1/documents/:id/validate', (req, res) => {
-  const doc = documentsStore.find(d => d.id === req.params.id);
-  if (!doc) {
-    return res.status(404).json({ error: 'Document not found' });
+// AI Comparative Analysis Trigger Endpoint
+app.post('/api/v1/documents/:id/compare', async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const { previousDocumentId } = req.body;
+
+    const doc = useDatabaseDataMode ? await getDocumentByIdFromDb(docId) : HISTORICAL_DOCUMENTS.find(d => d.id === docId);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const prevId = previousDocumentId || doc.previousDocumentId;
+    if (!prevId) {
+      return res.status(400).json({ error: 'previousDocumentId is required for comparative analysis' });
+    }
+
+    const prevDoc = useDatabaseDataMode ? await getDocumentByIdFromDb(prevId) : HISTORICAL_DOCUMENTS.find(d => d.id === prevId);
+    if (!prevDoc) {
+      return res.status(404).json({ error: 'Previous baseline document not found' });
+    }
+
+    const comparativeAnalysis = await compareWithPreviousReport(
+      doc.observations,
+      prevDoc.observations,
+      doc.studyDate.split('T')[0],
+      prevDoc.studyDate.split('T')[0]
+    );
+
+    doc.previousDocumentId = prevId;
+    doc.aiResults = {
+      ...doc.aiResults,
+      comparativeAnalysis
+    };
+    doc.updatedAt = new Date().toISOString();
+
+    const saved = useDatabaseDataMode ? await saveDocumentToDb(doc) : doc;
+    await logAudit(saved.id, 'AI Comparative Engine', 'COMPARATIVE_ANALYSIS_RUN', `Generated longitudinal comparative analysis against baseline study ${prevDoc.accessionNumber}.`, saved.tenantId);
+
+    res.json({ document: saved, comparativeAnalysis });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Comparative analysis failed', message: err.message });
   }
-
-  const errors: string[] = [];
-  const warnings: string[] = [];
-
-  // Rules Engine Validation
-  if (!doc.findingsText || doc.findingsText.trim().length < 10) {
-    errors.push('Findings text is empty or incomplete.');
-  }
-
-  if (!doc.impressionText || doc.impressionText.length === 0) {
-    errors.push('Impression section is required before doctor signoff.');
-  }
-
-  if (doc.aiResults?.consistencyCheck?.isConsistent === false) {
-    doc.aiResults.consistencyCheck.conflicts.forEach(conflict => {
-      warnings.push(`Consistency Warning in [${conflict.field}]: ${conflict.expected} vs narrative '${conflict.narrativeText}'`);
-    });
-  }
-
-  if (doc.aiResults?.missingInformation?.hasMissingInfo) {
-    doc.aiResults.missingInformation.items.forEach(item => {
-      warnings.push(`Incomplete Sequence/Data: ${item}`);
-    });
-  }
-
-  const validation = {
-    isValid: errors.length === 0,
-    errors,
-    warnings
-  };
-
-  doc.validation = validation;
-  res.json({ validation });
 });
 
-// Doctor Approval
-app.post('/api/v1/documents/:id/approve', (req, res) => {
-  const { practitioner } = req.body;
-  const index = documentsStore.findIndex(d => d.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Document not found' });
+// Doctor Approval Endpoint
+app.post('/api/v1/documents/:id/approve', async (req, res) => {
+  try {
+    const { practitioner } = req.body;
+    const doc = useDatabaseDataMode ? await getDocumentByIdFromDb(req.params.id) : HISTORICAL_DOCUMENTS.find(d => d.id === req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    doc.status = 'APPROVED';
+    if (practitioner) doc.practitioner = practitioner;
+    doc.updatedAt = new Date().toISOString();
+
+    const saved = useDatabaseDataMode ? await saveDocumentToDb(doc) : doc;
+    await logAudit(saved.id, practitioner?.name || doc.practitioner?.name || 'Radiologist', 'APPROVED', 'Report reviewed and approved by radiologist.', saved.tenantId);
+
+    res.json({ document: saved });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to approve document', message: err.message });
   }
-
-  const doc = documentsStore[index];
-  doc.status = 'APPROVED';
-  if (practitioner) doc.practitioner = practitioner;
-  doc.updatedAt = new Date().toISOString();
-
-  documentsStore[index] = doc;
-  logAudit(doc.id, practitioner?.name || doc.practitioner?.name || 'Radiologist', 'APPROVED', 'Report reviewed and approved by radiologist.', doc.tenantId);
-
-  res.json({ document: doc });
 });
 
 // Digital Signature Endpoint
-app.post('/api/v1/documents/:id/sign', (req, res) => {
-  const { practitioner, signatureImage } = req.body;
-  const index = documentsStore.findIndex(d => d.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: 'Document not found' });
+app.post('/api/v1/documents/:id/sign', async (req, res) => {
+  try {
+    const { practitioner, signatureImage } = req.body;
+    const doc = useDatabaseDataMode ? await getDocumentByIdFromDb(req.params.id) : HISTORICAL_DOCUMENTS.find(d => d.id === req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+
+    const defaultPractitioner = practitioner || doc.practitioner || SAMPLE_PRACTITIONERS[0];
+    const cryptoHash = `0x${Array.from({ length: 20 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
+
+    doc.status = 'DIGITALLY_SIGNED';
+    doc.practitioner = defaultPractitioner;
+    doc.digitalSignature = {
+      signedBy: defaultPractitioner.name,
+      practitionerName: defaultPractitioner.name,
+      registrationNo: defaultPractitioner.registrationNo,
+      signedAt: new Date().toISOString(),
+      hash: cryptoHash,
+      signatureImage: signatureImage || defaultPractitioner.signatureImage,
+      certificateAuthority: 'National Health PKI Cryptographic Signer'
+    };
+    doc.updatedAt = new Date().toISOString();
+
+    const saved = useDatabaseDataMode ? await saveDocumentToDb(doc) : doc;
+    await logAudit(saved.id, defaultPractitioner.name, 'SIGNED', `Digitally signed with PKI seal (Hash: ${cryptoHash}).`, saved.tenantId);
+
+    res.json({ document: saved, digitalSignature: saved.digitalSignature });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to sign document', message: err.message });
   }
-
-  const doc = documentsStore[index];
-  const p = practitioner || doc.practitioner || SAMPLE_PRACTITIONERS[0];
-
-  const cryptoHash = `0x${Array.from({ length: 20 }, () => Math.floor(Math.random() * 16).toString(16)).join('')}`;
-
-  doc.status = 'DIGITALLY_SIGNED';
-  doc.practitioner = p;
-  doc.digitalSignature = {
-    signedBy: p.name,
-    practitionerName: p.name,
-    registrationNo: p.registrationNo,
-    signedAt: new Date().toISOString(),
-    hash: cryptoHash,
-    signatureImage: signatureImage || p.signatureImage,
-    certificateAuthority: 'National Health PKI Cryptographic Signer'
-  };
-  doc.updatedAt = new Date().toISOString();
-
-  documentsStore[index] = doc;
-  logAudit(doc.id, p.name, 'SIGNED', `Digitally signed with PKI seal (Hash: ${cryptoHash}).`, doc.tenantId);
-
-  res.json({ document: doc, digitalSignature: doc.digitalSignature });
 });
 
 // FHIR R4 Export Endpoint
-app.get('/api/v1/documents/:id/fhir', (req, res) => {
-  const doc = documentsStore.find(d => d.id === req.params.id);
-  if (!doc) {
-    return res.status(404).json({ error: 'Document not found' });
-  }
+app.get('/api/v1/documents/:id/fhir', async (req, res) => {
+  try {
+    const doc = useDatabaseDataMode ? await getDocumentByIdFromDb(req.params.id) : HISTORICAL_DOCUMENTS.find(d => d.id === req.params.id);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
 
-  const fhirBundle = convertToFHIRDiagnosticReport(doc);
-  res.setHeader('Content-Type', 'application/fhir+json');
-  res.json(fhirBundle);
+    const fhirBundle = convertToFHIRDiagnosticReport(doc);
+    res.setHeader('Content-Type', 'application/fhir+json');
+    res.json(fhirBundle);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to generate FHIR export', message: err.message });
+  }
 });
 
 // Voice Dictation to Structured Data Parser Endpoint
@@ -455,7 +550,8 @@ app.post('/api/v1/voice/parse', async (req, res) => {
     return res.status(400).json({ error: 'dictationText is required' });
   }
 
-  const template = RADIOLOGY_TEMPLATES.find(t => t.id === templateId) || RADIOLOGY_TEMPLATES[0];
+  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+  const template = templates.find(t => t.id === templateId) || templates[0];
 
   try {
     const extractedObservations = await parseVoiceDictationToObservations(dictationText, template.fields);
@@ -472,17 +568,16 @@ app.post('/api/v1/chat', async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  const template = RADIOLOGY_TEMPLATES.find(t => t.id === templateId) || RADIOLOGY_TEMPLATES[0];
-  const doc = document || documentsStore[0];
+  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+  const template = templates.find(t => t.id === templateId) || templates[0];
+  const doc = document || (useDatabaseDataMode ? (await getDocumentsFromDb())[0] : HISTORICAL_DOCUMENTS[0]);
 
   try {
     const chatResult = await processChatCoPilot(message, doc, template.fields, ragEnabled !== false);
     
-    // If observations were extracted, update document store if document exists
     if (chatResult.extractedObservations && doc.id) {
-      const idx = documentsStore.findIndex(d => d.id === doc.id);
-      if (idx !== -1) {
-        const currentDoc = documentsStore[idx];
+      const currentDoc = useDatabaseDataMode ? await getDocumentByIdFromDb(doc.id) : doc;
+      if (currentDoc) {
         const updatedObs = { ...currentDoc.observations };
         
         Object.entries(chatResult.extractedObservations).forEach(([k, v]) => {
@@ -493,13 +588,14 @@ app.post('/api/v1/chat', async (req, res) => {
           }
         });
 
-        documentsStore[idx] = {
-          ...currentDoc,
-          observations: updatedObs,
-          findingsText: chatResult.suggestedNarrative || currentDoc.findingsText,
-          impressionText: chatResult.suggestedImpression || currentDoc.impressionText,
-          updatedAt: new Date().toISOString()
-        };
+        currentDoc.observations = updatedObs;
+        currentDoc.findingsText = chatResult.suggestedNarrative || currentDoc.findingsText;
+        currentDoc.impressionText = chatResult.suggestedImpression || currentDoc.impressionText;
+        currentDoc.updatedAt = new Date().toISOString();
+
+        if (useDatabaseDataMode) {
+          await saveDocumentToDb(currentDoc);
+        }
       }
     }
 
@@ -510,19 +606,30 @@ app.post('/api/v1/chat', async (req, res) => {
 });
 
 // Audit Trail Endpoint
-app.get('/api/v1/audit-logs', (req, res) => {
-  res.json({ count: auditLogsStore.length, logs: auditLogsStore });
+app.get('/api/v1/audit-logs', async (req, res) => {
+  try {
+    const logs = useDatabaseDataMode ? await getAuditLogsFromDb() : [];
+    res.json({ count: logs.length, logs });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to fetch audit logs', message: err.message });
+  }
 });
 
 // Start Express + Vite
 async function startServer() {
   console.log(`\n====================================================`);
   console.log(`⚙️ Starting Chakkra Clinical Intelligence Server`);
-  console.log(`📌 USE_DATABASE_DATA Flag: ${useDatabaseDataMode}`);
-  console.log(`📌 Selected Data Source: ${useDatabaseDataMode ? 'DATABASE' : 'SAMPLE'}`);
+  console.log(`📌 Database Persistence Active: ${useDatabaseDataMode}`);
   console.log(`====================================================\n`);
 
-  documentsStore = await loadDocumentsFromSource(useDatabaseDataMode);
+  if (useDatabaseDataMode) {
+    try {
+      await runMigrations();
+      await seedDatabase();
+    } catch (err: any) {
+      console.warn('⚠️ Database auto-migration / seeding warning:', err.message);
+    }
+  }
 
   const isProduction = process.env.NODE_ENV === 'production' || (process.argv[1] && process.argv[1].includes('dist'));
 

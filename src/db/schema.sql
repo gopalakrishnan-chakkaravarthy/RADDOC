@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS tenants (
   code VARCHAR(64) NOT NULL UNIQUE,
   logo_url TEXT,
   header_title VARCHAR(255) NOT NULL,
+  department VARCHAR(255) DEFAULT 'Department of Radio-Diagnosis & Imaging',
   address TEXT NOT NULL,
   phone VARCHAR(64) NOT NULL,
   email VARCHAR(128) NOT NULL,
@@ -45,7 +46,9 @@ CREATE TABLE IF NOT EXISTS templates (
   id VARCHAR(64) PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   modality VARCHAR(16) NOT NULL,
-  version VARCHAR(32) NOT NULL,
+  category VARCHAR(128),
+  description TEXT,
+  version VARCHAR(32) NOT NULL DEFAULT '1.0',
   fields_json JSONB NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
@@ -54,17 +57,22 @@ CREATE TABLE IF NOT EXISTS templates (
 CREATE TABLE IF NOT EXISTS clinical_documents (
   id VARCHAR(64) PRIMARY KEY,
   tenant_id VARCHAR(64) REFERENCES tenants(id) ON DELETE CASCADE,
-  patient_id VARCHAR(64) REFERENCES patients(id) ON DELETE CASCADE,
-  template_id VARCHAR(64) REFERENCES templates(id),
-  practitioner_id VARCHAR(64) REFERENCES practitioners(id),
+  patient_id VARCHAR(64),
+  patient_json JSONB NOT NULL,
+  template_id VARCHAR(64),
+  template_name VARCHAR(255) NOT NULL,
+  practitioner_id VARCHAR(64),
+  practitioner_json JSONB,
   modality VARCHAR(16) NOT NULL,
   study_date TIMESTAMP WITH TIME ZONE NOT NULL,
   accession_number VARCHAR(64) NOT NULL UNIQUE,
   referring_physician VARCHAR(255) NOT NULL,
   status VARCHAR(32) NOT NULL DEFAULT 'DRAFT',
   observations_json JSONB DEFAULT '{}'::jsonb,
-  findings_text TEXT,
+  findings_text TEXT DEFAULT '',
   impression_text_json JSONB DEFAULT '[]'::jsonb,
+  ai_results_json JSONB,
+  validation_json JSONB,
   digital_signature_json JSONB,
   previous_document_id VARCHAR(64),
   version INT DEFAULT 1,
@@ -75,7 +83,7 @@ CREATE TABLE IF NOT EXISTS clinical_documents (
 -- 6. Audit Logs Table (FHIR & Security Audit Trail)
 CREATE TABLE IF NOT EXISTS audit_logs (
   id VARCHAR(64) PRIMARY KEY,
-  document_id VARCHAR(64) REFERENCES clinical_documents(id) ON DELETE CASCADE,
+  document_id VARCHAR(64),
   tenant_id VARCHAR(64) REFERENCES tenants(id),
   actor VARCHAR(255) NOT NULL,
   action VARCHAR(64) NOT NULL,
@@ -89,3 +97,4 @@ CREATE INDEX IF NOT EXISTS idx_documents_patient ON clinical_documents(patient_i
 CREATE INDEX IF NOT EXISTS idx_documents_status ON clinical_documents(status);
 CREATE INDEX IF NOT EXISTS idx_documents_accession ON clinical_documents(accession_number);
 CREATE INDEX IF NOT EXISTS idx_audit_document ON audit_logs(document_id);
+
