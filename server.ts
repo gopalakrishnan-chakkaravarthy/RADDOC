@@ -524,7 +524,9 @@ async function startServer() {
 
   documentsStore = await loadDocumentsFromSource(useDatabaseDataMode);
 
-  if (process.env.NODE_ENV !== 'production') {
+  const isProduction = process.env.NODE_ENV === 'production' || (process.argv[1] && process.argv[1].includes('dist'));
+
+  if (!isProduction) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
