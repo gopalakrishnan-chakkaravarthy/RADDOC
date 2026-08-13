@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: chakkra-clinical-intelligence
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: USE_DATABASE_DATA
+        value: "false"
