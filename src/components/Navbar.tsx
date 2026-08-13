@@ -15,7 +15,8 @@ import {
   X,
   Database,
   FlaskConical,
-  RefreshCw
+  RefreshCw,
+  Printer
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -38,6 +39,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeTab,
   setActiveTab,
   reportStatus,
+  activeDocument,
+  onOpenPdfModal,
   dataSourceMode,
   onToggleDataSource
 }) => {
@@ -82,6 +85,18 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right Section: Tenant Switcher, Data Source Toggle, Badges & Mobile Menu Button */}
         <div className="flex items-center gap-1.5 sm:gap-2.5 flex-shrink-0">
+          {/* Print / Save Branded PDF Header Button */}
+          {onOpenPdfModal && activeDocument && (
+            <button
+              type="button"
+              onClick={onOpenPdfModal}
+              title="Print / Save Hospital Branded PDF Report"
+              className="flex items-center gap-1.5 text-xs bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer shadow-md border border-cyan-400/30"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Print / Save PDF</span>
+            </button>
+          )}
           {/* Data Source Flag Switcher Badge */}
           <button
             type="button"

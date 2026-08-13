@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { ClinicalDocument, TemplateDefinition, Practitioner, Patient } from '../types';
+import { ClinicalDocument, TemplateDefinition, Practitioner, Patient, HospitalTenant } from '../types';
 import { VoiceRecording } from './VoiceRecording';
 import {
   triggerAIGeneration,
@@ -39,8 +39,15 @@ interface ReportStudioProps {
   templates: TemplateDefinition[];
   practitioners: Practitioner[];
   patients: Patient[];
+  tenant?: HospitalTenant;
+  historicalDocuments?: ClinicalDocument[];
   onDocumentChange: (doc: ClinicalDocument) => void;
-  onOpenPdf: () => void;
+  onOpenPdf?: () => void;
+  onOpenPdfPreview?: () => void;
+  onAIGenerate?: any;
+  onValidate?: any;
+  onApprove?: any;
+  onDigitalSign?: any;
 }
 
 export const ReportStudio: React.FC<ReportStudioProps> = ({
@@ -48,9 +55,13 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
   templates = [],
   practitioners = [],
   patients = [],
+  tenant,
+  historicalDocuments = [],
   onDocumentChange,
-  onOpenPdf
+  onOpenPdf,
+  onOpenPdfPreview
 }) => {
+  const handleOpenPdf = onOpenPdf || onOpenPdfPreview || (() => {});
   // Active workflow step (1 to 11)
   const [activeStep, setActiveStep] = useState<number>(3); // Default to Step 3 (Structured measurements)
 
@@ -471,7 +482,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
           </button>
 
           <button
-            onClick={onOpenPdf}
+            onClick={handleOpenPdf}
             className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white border border-cyan-400/30 px-3.5 py-2 rounded-xl text-xs font-bold shadow-md cursor-pointer transition-all"
           >
             <Printer className="w-4 h-4" />
@@ -1147,7 +1158,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
               </p>
 
               <button
-                onClick={onOpenPdf}
+                onClick={handleOpenPdf}
                 className="bg-cyan-600 hover:bg-cyan-500 text-white px-6 py-3 rounded-xl font-bold text-xs shadow-lg cursor-pointer"
               >
                 Open Full Branded PDF Report

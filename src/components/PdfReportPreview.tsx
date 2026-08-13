@@ -13,11 +13,15 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
   const reportContentRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
-    printReportPdf(doc, tenant);
+    window.print();
   };
 
   const handleDownloadFile = () => {
     downloadReportPdf(doc, tenant);
+  };
+
+  const handleVectorPdfPrint = () => {
+    printReportPdf(doc, tenant);
   };
 
   return (
@@ -32,6 +36,7 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrint}
+              title="Open System Print / Save to PDF Dialog"
               className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-500 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-md transition-all cursor-pointer border border-cyan-400/30"
             >
               <Printer className="w-4 h-4" />
@@ -40,10 +45,11 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
 
             <button
               onClick={handleDownloadFile}
+              title="Download High-Resolution Vector PDF File"
               className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3.5 py-2 rounded-xl text-xs font-semibold shadow-sm transition-all cursor-pointer"
             >
               <Download className="w-4 h-4 text-cyan-400" />
-              Download Report
+              Download PDF
             </button>
 
             <button

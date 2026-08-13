@@ -318,6 +318,7 @@ export default function App() {
             onValidate={handleValidate}
             onApprove={handleApprove}
             onDigitalSign={handleDigitalSign}
+            onOpenPdf={() => setShowPdfModal(true)}
             onOpenPdfPreview={() => setShowPdfModal(true)}
           />
         )}

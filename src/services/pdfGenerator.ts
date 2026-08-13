@@ -387,7 +387,9 @@ export function printReportPdf(doc: ClinicalDocument, tenant: HospitalTenant): v
   };
 
   setTimeout(() => {
-    document.body.removeChild(iframe);
+    if (document.body.contains(iframe)) {
+      document.body.removeChild(iframe);
+    }
     URL.revokeObjectURL(blobUrl);
   }, 30000);
 }
