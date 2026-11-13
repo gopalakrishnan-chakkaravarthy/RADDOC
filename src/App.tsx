@@ -8,6 +8,7 @@ import {
   getPatients,
   getTemplates,
   getDocuments,
+  getDocumentById,
   createDocument,
   updateDocument,
   triggerAIGeneration,
@@ -19,8 +20,12 @@ import {
   deletePractitioner,
   getDataSourceConfig,
   toggleDataSource,
-  runComparativeAnalysis
+  runComparativeAnalysis,
+  getCurrentUser,
+  logout,
+  AuthUser
 } from './services/api';
+import { AuthScreen } from './components/AuthScreen';
 import { GlobalHttpLoader } from './components/GlobalHttpLoader';
 import {
   SAMPLE_TENANTS,
@@ -39,17 +44,24 @@ import { ApiExplorer } from './components/ApiExplorer';
 import { HospitalSettings } from './components/HospitalSettings';
 import { AuditTrailView } from './components/AuditTrailView';
 import { PdfReportPreview } from './components/PdfReportPreview';
+import { HospitalMappings } from './components/HospitalMappings';
+import { ReportingView } from './components/ReportingView';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 export default function App() {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [tenants, setTenants] = useState<HospitalTenant[]>(SAMPLE_TENANTS);
-  const [selectedTenant, setSelectedTenant] = useState<HospitalTenant>(SAMPLE_TENANTS[0]);
+  const [selectedTenant, setSelectedTenant] = useState<HospitalTenant | null>(SAMPLE_TENANTS[0]);
   const [practitioners, setPractitioners] = useState<Practitioner[]>(SAMPLE_PRACTITIONERS);
   const [patients, setPatients] = useState<Patient[]>(SAMPLE_PATIENTS);
   const [templates, setTemplates] = useState<TemplateDefinition[]>(RADIOLOGY_TEMPLATES);
   const [documents, setDocuments] = useState<ClinicalDocument[]>(HISTORICAL_DOCUMENTS);
-  const [activeDocument, setActiveDocument] = useState<ClinicalDocument>(HISTORICAL_DOCUMENTS[0]);
+  const [activeDocument, setActiveDocument] = useState<ClinicalDocument | null>(HISTORICAL_DOCUMENTS[0]);
   const [activeTab, setActiveTab] = useState<string>('studio');
   const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [reportOpenError, setReportOpenError] = useState(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [isComparing, setIsComparing] = useState<boolean>(false);
   const [dataSourceMode, setDataSourceMode] = useState<{ useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean }>({
@@ -58,29 +70,71 @@ export default function App() {
     dbConnected: false
   });
 
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } finally {
+      // The server expires the HttpOnly session cookie; clear any browser-side state as well.
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+      setAuthUser(null);
+      setTenants(SAMPLE_TENANTS);
+      setSelectedTenant(null);
+      setPractitioners(SAMPLE_PRACTITIONERS);
+      setPatients(SAMPLE_PATIENTS);
+      setTemplates(RADIOLOGY_TEMPLATES);
+      setDocuments(HISTORICAL_DOCUMENTS);
+      setActiveDocument(null);
+      setActiveTab('studio');
+      setShowPdfModal(false);
+      setShowChangePassword(false);
+      setReportOpenError(false);
+    }
+  };
+
   useEffect(() => {
+    getCurrentUser().then(({ user }) => {
+      setAuthUser(user);
+      if (user.role === 'system_admin') setActiveTab('user-hospital-mapping');
+    }).catch(() => setAuthUser(null)).finally(() => setAuthChecked(true));
+  }, []);
+
+  useEffect(() => {
+    const handleExpiredSession = () => { void handleLogout(); };
+    window.addEventListener('raddoc:session-expired', handleExpiredSession);
+    return () => window.removeEventListener('raddoc:session-expired', handleExpiredSession);
+  }, []);
+
+  useEffect(() => {
+    if (!authChecked) return;
+    if (!authUser) { setLoading(false); return; }
     async function initData() {
+      setLoading(true);
       try {
         const [tenantsData, practData, patData, tmplData, docsData, dsConfig] = await Promise.all([
-          getTenants().catch(() => SAMPLE_TENANTS),
+          getTenants().catch(() => []),
           getPractitioners().catch(() => SAMPLE_PRACTITIONERS),
-          getPatients().catch(() => SAMPLE_PATIENTS),
+          getPatients().catch(() => []),
           getTemplates().catch(() => RADIOLOGY_TEMPLATES),
-          getDocuments().catch(() => HISTORICAL_DOCUMENTS),
+          getDocuments().catch(() => []),
           getDataSourceConfig().catch(() => ({ useDatabaseData: false, dataSource: 'SAMPLE' as const, dbConnected: false, config: {} }))
         ]);
 
-        if (tenantsData && tenantsData.length > 0) {
-          setTenants(tenantsData);
-          setSelectedTenant(tenantsData[0]);
-        }
+        setTenants(tenantsData || []);
+        setSelectedTenant(tenantsData?.[0] || null);
         if (practData && practData.length > 0) setPractitioners(practData);
-        if (patData && patData.length > 0) setPatients(patData);
+        setPatients(patData || []);
         if (tmplData && tmplData.length > 0) setTemplates(tmplData);
-        if (docsData && docsData.length > 0) {
-          setDocuments(docsData);
-          setActiveDocument(docsData[0]);
-        }
+        setDocuments(docsData || []);
+        const reportIdFromPath = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/)?.[1];
+        let initialDocument = docsData?.[0] || null;
+        if (reportIdFromPath) {
+          try { initialDocument = await getDocumentById(decodeURIComponent(reportIdFromPath)); }
+          catch { initialDocument = null; }
+          setReportOpenError(!initialDocument);
+          setActiveTab('studio');
+        } else setReportOpenError(false);
+        setActiveDocument(initialDocument);
         if (dsConfig) {
           setDataSourceMode({
             useDatabaseData: dsConfig.useDatabaseData,
@@ -96,7 +150,7 @@ export default function App() {
     }
 
     initData();
-  }, []);
+  }, [authChecked, authUser]);
 
   const handleToggleDataSource = async () => {
     try {
@@ -110,10 +164,8 @@ export default function App() {
 
       // Reload fresh documents after data source toggle
       const freshDocs = await getDocuments();
-      if (freshDocs && freshDocs.length > 0) {
-        setDocuments(freshDocs);
-        setActiveDocument(freshDocs[0]);
-      }
+      setDocuments(freshDocs || []);
+      setActiveDocument(freshDocs?.[0] || null);
     } catch (err) {
       console.error('Failed to toggle data source mode:', err);
     } finally {
@@ -126,6 +178,7 @@ export default function App() {
   };
 
   const handleCreateNewStudy = async (patient: Patient, templateId: string, modality: string) => {
+    if (!selectedTenant) return;
     try {
       const template = templates.find(t => t.id === templateId) || templates[0];
       const initialObs: Record<string, any> = {};
@@ -252,7 +305,7 @@ export default function App() {
       
       // Update active document if practitioner matches
       if (activeDocument && activeDocument.practitioner && activeDocument.practitioner.id === id) {
-        setActiveDocument(prev => ({ ...prev, practitioner: updated }));
+        setActiveDocument({ ...activeDocument, practitioner: updated });
       }
     } catch (err) {
       console.error('Failed to update practitioner:', err);
@@ -270,7 +323,7 @@ export default function App() {
     }
   };
 
-  if (loading) {
+  if (!authChecked || (authUser && loading)) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-slate-100">
         <div className="text-center space-y-3">
@@ -281,6 +334,9 @@ export default function App() {
       </div>
     );
   }
+
+  if (!authUser) return <AuthScreen onAuthenticated={(user) => { setLoading(true); setAuthUser(user); if (user.role === 'system_admin') setActiveTab('user-hospital-mapping'); }} />;
+  if (!selectedTenant && authUser.role !== 'system_admin') return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center text-slate-100"><div><h1 className="text-xl font-bold">No hospital is assigned to this account</h1><p className="mt-2 text-sm text-slate-400">Ask an administrator to assign your login to a hospital.</p><button onClick={handleLogout} className="mt-5 rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-950">Sign out</button></div></div>;
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans antialiased text-slate-800 relative">
@@ -298,10 +354,16 @@ export default function App() {
         onOpenPdfModal={() => setShowPdfModal(true)}
         dataSourceMode={dataSourceMode}
         onToggleDataSource={handleToggleDataSource}
+        isAdmin={authUser.role === 'admin'}
+        isSystemAdmin={authUser.role === 'system_admin'}
+        userName={authUser.name}
+        onLogout={handleLogout}
+        onChangePassword={() => setShowChangePassword(true)}
       />
 
       {/* Main Clinical Intelligence Engine Application Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
+        {reportOpenError && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">This report could not be found or is not available to your hospital account.</div>}
         {activeTab === 'studio' && activeDocument && (
           <ReportStudio
             document={activeDocument}
@@ -361,12 +423,19 @@ export default function App() {
           <AuditTrailView />
         )}
 
+        {activeTab === 'reporting' && <ReportingView />}
+
         {activeTab === 'api' && activeDocument && (
           <ApiExplorer document={activeDocument} />
         )}
 
+        {activeTab === 'user-hospital-mapping' && authUser.role === 'system_admin' && (
+          <HospitalMappings onMappingComplete={handleLogout} />
+        )}
+
         {activeTab === 'settings' && selectedTenant && (
           <HospitalSettings
+            currentUser={authUser}
             tenant={selectedTenant}
             tenants={tenants}
             onSelectTenant={handleSelectTenant}
@@ -406,6 +475,7 @@ export default function App() {
           onClose={() => setShowPdfModal(false)}
         />
       )}
+      {showChangePassword && <ChangePasswordModal onClose={() => setShowChangePassword(false)} />}
     </div>
   );
 }

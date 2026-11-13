@@ -31,7 +31,8 @@ import {
   Send,
   Sliders,
   Database,
-  ChevronLeft
+  ChevronLeft,
+  ExternalLink
 } from 'lucide-react';
 
 interface ReportStudioProps {
@@ -62,6 +63,12 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
   onOpenPdfPreview
 }) => {
   const handleOpenPdf = onOpenPdf || onOpenPdfPreview || (() => {});
+  const relatedPatientReports = historicalDocuments.filter(report =>
+    report.id !== doc.id && (
+      (doc.patient?.id && report.patient?.id === doc.patient.id) ||
+      (doc.patient?.patientId && report.patient?.patientId === doc.patient.patientId)
+    )
+  );
   // Active workflow step (1 to 11)
   const [activeStep, setActiveStep] = useState<number>(3); // Default to Step 3 (Structured measurements)
 
@@ -490,6 +497,14 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
           </button>
         </div>
       </div>
+
+      {relatedPatientReports.length > 0 && <section className="rounded-xl border border-cyan-200 bg-cyan-50 p-4">
+        <div className="mb-2 flex items-center justify-between gap-3"><div><h3 className="text-sm font-bold text-slate-800">Existing reports for this patient</h3><p className="text-xs text-slate-600">Open a previous report in a new tab.</p></div><span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-cyan-800">{relatedPatientReports.length}</span></div>
+        <div className="space-y-2">{relatedPatientReports.map(report => <div key={report.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-cyan-100 bg-white px-3 py-2">
+          <div><p className="text-sm font-semibold text-slate-800">{report.templateName} <span className="text-xs font-normal text-slate-500">({report.modality})</span></p><p className="text-xs text-slate-500">{new Date(report.studyDate).toLocaleDateString()} · {report.accessionNumber} · {report.status}</p></div>
+          <button type="button" onClick={() => window.open(`/reports/${encodeURIComponent(report.id)}`, '_blank', 'noopener,noreferrer')} className="inline-flex items-center gap-1 rounded-lg bg-cyan-700 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-600">Open report <ExternalLink size={13}/></button>
+        </div>)}</div>
+      </section>}
 
       {saveMessage && (
         <div className="bg-emerald-950 border border-emerald-800 text-emerald-200 px-4 py-2 rounded-xl text-xs flex items-center justify-between shadow-lg animate-in fade-in duration-200">

@@ -2,6 +2,91 @@ import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefini
 
 export const API_BASE = '/api/v1';
 
+export interface AuthUser { id: string; name: string; email: string; tenantId: string | null; role: 'system_admin' | 'admin' | 'user' }
+
+async function authRequest<T>(path: string, body?: Record<string, string>): Promise<T> {
+  const response = await fetch(`${API_BASE}/auth/${path}`, {
+    method: body ? 'POST' : 'GET',
+    credentials: 'same-origin',
+    headers: body ? { 'Content-Type': 'application/json' } : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Authentication request failed.');
+  return data;
+}
+
+export const getCurrentUser = () => authRequest<{ user: AuthUser }>('me');
+export const login = (email: string, password: string) => authRequest<{ user: AuthUser }>('login', { email, password });
+export const signup = (name: string, email: string, password: string) => authRequest<{ user: AuthUser }>('signup', { name, email, password });
+export const logout = () => authRequest<{ success: boolean }>('logout', {});
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  authRequest<{ success: boolean }>('change-password', { currentPassword, newPassword });
+
+export interface InvoiceRecord {
+  id: string;
+  invoice_number: string;
+  document_id: string;
+  tenant_id: string;
+  patient_id: string | null;
+  patient_name: string;
+  mobile_number: string | null;
+  diagnostic_type: string;
+  amount: string | number;
+  currency: string;
+  status: 'DRAFT' | 'ISSUED' | 'PAID' | 'CANCELLED';
+  created_at: string;
+}
+
+export async function searchReports(filters: { name?: string; mobile?: string; diagnosticType?: string }): Promise<ClinicalDocument[]> {
+  const params = new URLSearchParams();
+  if (filters.name) params.set('name', filters.name);
+  if (filters.mobile) params.set('mobile', filters.mobile);
+  if (filters.diagnosticType) params.set('diagnosticType', filters.diagnosticType);
+  const response = await apiFetch(`${API_BASE}/reports/search?${params.toString()}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not search reports.');
+  return data.documents || [];
+}
+
+export async function getInvoices(filters: { from?: string; to?: string } = {}): Promise<InvoiceRecord[]> {
+  const params = new URLSearchParams();
+  if (filters.from) params.set('from', filters.from);
+  if (filters.to) params.set('to', filters.to);
+  const response = await apiFetch(`${API_BASE}/invoices${params.size ? `?${params.toString()}` : ''}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load invoices.');
+  return data.invoices || [];
+}
+
+export async function updateInvoice(id: string, updates: { amount?: number; status?: InvoiceRecord['status'] }): Promise<InvoiceRecord> {
+  const response = await apiFetch(`${API_BASE}/invoices/${encodeURIComponent(id)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not update invoice.');
+  return data.invoice;
+}
+
+export interface HospitalMappings {
+  users: Array<{ id: string; name: string; email: string; role: string; tenant_id: string | null; tenant_name: string | null }>;
+  tenants: HospitalTenant[];
+}
+
+export async function getHospitalMappings(): Promise<HospitalMappings> {
+  const response = await apiFetch(`${API_BASE}/system-admin/user-hospital-mappings`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load hospital mappings.');
+  return data;
+}
+
+export async function mapUserToHospital(userId: string, tenantId: string) {
+  const response = await apiFetch(`${API_BASE}/system-admin/users/${userId}/hospital`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tenantId }) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not map user to hospital.');
+  return data.user;
+}
+
 // Global API Request Listener State Tracker
 type ApiStateListener = (state: { activeRequests: number; isLoading: boolean }) => void;
 const listeners: Set<ApiStateListener> = new Set();
@@ -25,6 +110,9 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
   notifyListeners();
   try {
     const response = await fetch(input, init);
+    if (response.status === 401 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('raddoc:session-expired'));
+    }
     return response;
   } finally {
     activeRequestsCount = Math.max(0, activeRequestsCount - 1);
@@ -143,6 +231,7 @@ export async function getDocuments(tenantId?: string): Promise<ClinicalDocument[
 export async function getDocumentById(id: string): Promise<ClinicalDocument> {
   const res = await apiFetch(`${API_BASE}/documents/${id}`);
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not open this report.');
   return data.document;
 }
 

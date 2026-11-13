@@ -218,9 +218,9 @@ export async function deletePractitionerFromDb(id: string): Promise<boolean> {
 // 3. PATIENTS CRUD
 // ==========================================
 
-export async function getPatientsFromDb(): Promise<Patient[]> {
+export async function getPatientsFromDb(tenantId?: string): Promise<Patient[]> {
   const client = getDbPool();
-  const res = await client.query('SELECT * FROM patients ORDER BY created_at ASC');
+  const res = await client.query(tenantId ? 'SELECT * FROM patients WHERE tenant_id = $1 ORDER BY created_at ASC' : 'SELECT * FROM patients ORDER BY created_at ASC', tenantId ? [tenantId] : []);
   return res.rows.map(row => ({
     id: row.id,
     patientId: row.patient_id,
@@ -233,7 +233,7 @@ export async function getPatientsFromDb(): Promise<Patient[]> {
   }));
 }
 
-export async function createPatientInDb(patient: Partial<Patient>): Promise<Patient> {
+export async function createPatientInDb(patient: Partial<Patient>, tenantId?: string): Promise<Patient> {
   const client = getDbPool();
   const id = patient.id || `pat-${Date.now()}`;
   const patientId = patient.patientId || `PAT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -245,9 +245,10 @@ export async function createPatientInDb(patient: Partial<Patient>): Promise<Pati
   const clinicalHistory = patient.clinicalHistory || '';
 
   const query = `
-    INSERT INTO patients (id, patient_id, name, age, gender, dob, phone, clinical_history)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    INSERT INTO patients (id, tenant_id, patient_id, name, age, gender, dob, phone, clinical_history)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
     ON CONFLICT (id) DO UPDATE SET
+      tenant_id = EXCLUDED.tenant_id,
       patient_id = EXCLUDED.patient_id,
       name = EXCLUDED.name,
       age = EXCLUDED.age,
@@ -257,7 +258,7 @@ export async function createPatientInDb(patient: Partial<Patient>): Promise<Pati
       clinical_history = EXCLUDED.clinical_history
     RETURNING *;
   `;
-  const res = await client.query(query, [id, patientId, name, age, gender, dob, phone, clinicalHistory]);
+  const res = await client.query(query, [id, tenantId || null, patientId, name, age, gender, dob, phone, clinicalHistory]);
   const row = res.rows[0];
   return {
     id: row.id,
@@ -271,9 +272,9 @@ export async function createPatientInDb(patient: Partial<Patient>): Promise<Pati
   };
 }
 
-export async function updatePatientInDb(id: string, updates: Partial<Patient>): Promise<Patient> {
+export async function updatePatientInDb(id: string, updates: Partial<Patient>, tenantId?: string): Promise<Patient> {
   const client = getDbPool();
-  const existingRes = await client.query('SELECT * FROM patients WHERE id = $1', [id]);
+  const existingRes = await client.query(tenantId ? 'SELECT * FROM patients WHERE id = $1 AND tenant_id = $2' : 'SELECT * FROM patients WHERE id = $1', tenantId ? [id, tenantId] : [id]);
   if (existingRes.rows.length === 0) {
     throw new Error(`Patient with ID ${id} not found`);
   }
@@ -307,9 +308,9 @@ export async function updatePatientInDb(id: string, updates: Partial<Patient>): 
   };
 }
 
-export async function deletePatientFromDb(id: string): Promise<boolean> {
+export async function deletePatientFromDb(id: string, tenantId?: string): Promise<boolean> {
   const client = getDbPool();
-  const res = await client.query('DELETE FROM patients WHERE id = $1', [id]);
+  const res = await client.query(tenantId ? 'DELETE FROM patients WHERE id = $1 AND tenant_id = $2' : 'DELETE FROM patients WHERE id = $1', tenantId ? [id, tenantId] : [id]);
   return (res.rowCount ?? 0) > 0;
 }
 
@@ -403,9 +404,9 @@ export async function getDocumentsFromDb(tenantId?: string, patientId?: string, 
   return res.rows.map(mapRowToDocument);
 }
 
-export async function getDocumentByIdFromDb(id: string): Promise<ClinicalDocument | null> {
+export async function getDocumentByIdFromDb(id: string, tenantId?: string): Promise<ClinicalDocument | null> {
   const client = getDbPool();
-  const res = await client.query('SELECT * FROM clinical_documents WHERE id = $1', [id]);
+  const res = await client.query(tenantId ? 'SELECT * FROM clinical_documents WHERE id = $1 AND tenant_id = $2' : 'SELECT * FROM clinical_documents WHERE id = $1', tenantId ? [id, tenantId] : [id]);
   if (res.rows.length === 0) return null;
   return mapRowToDocument(res.rows[0]);
 }
@@ -509,9 +510,9 @@ function mapRowToDocument(row: any): ClinicalDocument {
 // 6. AUDIT LOGS CRUD
 // ==========================================
 
-export async function getAuditLogsFromDb(): Promise<AuditLogEntry[]> {
+export async function getAuditLogsFromDb(tenantId?: string): Promise<AuditLogEntry[]> {
   const client = getDbPool();
-  const res = await client.query('SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200');
+  const res = await client.query(tenantId ? 'SELECT * FROM audit_logs WHERE tenant_id = $1 ORDER BY timestamp DESC LIMIT 200' : 'SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 200', tenantId ? [tenantId] : []);
   return res.rows.map(row => ({
     id: row.id,
     documentId: row.document_id || '',

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { HospitalTenant } from '../types';
+import React, { useState } from "react";
+import { HospitalTenant } from "../types";
 import {
   FileText,
   Activity,
@@ -7,6 +7,7 @@ import {
   Code2,
   Building2,
   History,
+  ClipboardList,
   ShieldCheck,
   Stethoscope,
   Sparkles,
@@ -16,20 +17,31 @@ import {
   Database,
   FlaskConical,
   RefreshCw,
-  Printer
-} from 'lucide-react';
+  Printer,
+  LogOut,
+  KeyRound,
+} from "lucide-react";
 
 interface NavbarProps {
   tenants: HospitalTenant[];
-  selectedTenant: HospitalTenant;
+  selectedTenant: HospitalTenant | null;
   onSelectTenant: (tenant: HospitalTenant) => void;
   activeTab: string;
   setActiveTab: (tab: string) => void;
   reportStatus?: string;
   activeDocument?: any;
   onOpenPdfModal?: () => void;
-  dataSourceMode?: { useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean };
+  dataSourceMode?: {
+    useDatabaseData: boolean;
+    dataSource: "DATABASE" | "SAMPLE";
+    dbConnected: boolean;
+  };
   onToggleDataSource?: () => void;
+  isAdmin?: boolean;
+  isSystemAdmin?: boolean;
+  userName?: string;
+  onLogout?: () => void;
+  onChangePassword?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -42,26 +54,39 @@ export const Navbar: React.FC<NavbarProps> = ({
   activeDocument,
   onOpenPdfModal,
   dataSourceMode,
-  onToggleDataSource
+  onToggleDataSource,
+  isAdmin = false,
+  isSystemAdmin = false,
+  userName,
+  onLogout,
+  onChangePassword,
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const navItems = [
-    { id: 'studio', label: 'Report Studio', icon: Stethoscope },
-    { id: 'queue', label: 'Clinical Queue', icon: Layers },
-    { id: 'comparison', label: 'Previous Study Compare', icon: GitCompare },
-    { id: 'fhir', label: 'FHIR & DICOM SR', icon: FileText },
-    { id: 'api', label: 'Developer API Explorer', icon: Code2 },
-    { id: 'settings', label: 'Hospital & Doctors', icon: Building2 },
-    { id: 'audit', label: 'Audit Trail', icon: History },
+  const standardNavItems = [
+    { id: "studio", label: "Report Studio", icon: Stethoscope },
+    { id: "queue", label: "Clinical Queue", icon: Layers },
+    { id: "comparison", label: "Previous Study Compare", icon: GitCompare },
+    { id: "reporting", label: "Reporting", icon: ClipboardList },
   ];
+  const navItems = isSystemAdmin
+    ? [
+        { id: "fhir", label: "FHIR & DICOM SR", icon: FileText },
+        { id: "api", label: "Developer API Explorer", icon: Code2 },
+        { id: "audit", label: "Audit Trail", icon: History },
+        { id: "settings", label: "Hospital & Doctors", icon: Building2 },
+        { id: "user-hospital-mapping", label: "User & Hospital Mapping", icon: Building2 },
+      ]
+    : standardNavItems;
 
   const handleTabClick = (id: string) => {
     setActiveTab(id);
     setMobileMenuOpen(false);
   };
 
-  const isDb = dataSourceMode?.useDatabaseData || dataSourceMode?.dataSource === 'DATABASE';
+  const isDb =
+    dataSourceMode?.useDatabaseData ||
+    dataSourceMode?.dataSource === "DATABASE";
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-40 shadow-xl">
@@ -74,12 +99,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 sm:gap-2">
-              <span className="font-bold text-base sm:text-lg tracking-tight text-white truncate">Chakkra RADDOC - AI Assisted Document Generator</span>
+              <span className="font-bold text-base sm:text-lg tracking-tight text-white truncate">
+                Chakkra RADDOC - AI Assisted Document Generator
+              </span>
               <span className="hidden xs:inline-flex text-[10px] sm:text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 font-medium border border-cyan-500/30 whitespace-nowrap">
                 Clinical Engine
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 hidden lg:block truncate max-w-xs">Structured Clinical Intelligence API & Automation</p>
+            <p className="text-[11px] text-slate-400 hidden lg:block truncate max-w-xs">
+              Structured Clinical Intelligence API & Automation
+            </p>
           </div>
         </div>
 
@@ -98,7 +127,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
           {/* Data Source Flag Switcher Badge */}
-          <button
+          {/* {isAdmin && <button
             type="button"
             onClick={onToggleDataSource}
             title={isDb ? "Click to switch to Sample Data mode" : "Click to switch to PostgreSQL DB mode"}
@@ -119,10 +148,10 @@ export const Navbar: React.FC<NavbarProps> = ({
               </>
             )}
             <RefreshCw className="w-3 h-3 opacity-60 ml-0.5" />
-          </button>
+          </button>} */}
 
           {/* Tenant Dropdown */}
-          <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 shadow-inner max-w-[130px] sm:max-w-xs">
+          {/* <div className="flex items-center gap-1 sm:gap-1.5 bg-slate-800/80 border border-slate-700/80 rounded-lg px-2 py-1.5 text-xs text-slate-200 shadow-inner max-w-[130px] sm:max-w-xs">
             <Building2 className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
             <select
               value={selectedTenant?.id || ''}
@@ -138,7 +167,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </option>
               ))}
             </select>
-          </div>
+          </div> */}
 
           {/* FHIR Status Badge */}
           <div className="hidden md:flex items-center gap-1.5 text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-2.5 py-1 rounded-md font-medium whitespace-nowrap">
@@ -146,11 +175,33 @@ export const Navbar: React.FC<NavbarProps> = ({
             FHIR R4
           </div>
 
+          <button
+            type="button"
+            onClick={onChangePassword}
+            title="Change password"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 transition-colors"
+          >
+            <KeyRound className="h-4 w-4" />
+            <span className="hidden xl:inline">Password</span>
+          </button>
+          <button
+            type="button"
+            onClick={onLogout}
+            title="Sign out"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-2 text-xs font-semibold text-slate-200 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-200 transition-colors"
+          >
+            <LogOut className="h-4 w-4" />
+            <span className="hidden xl:inline">
+              Sign out{userName ? ` · ${userName}` : ""}
+            </span>
+            <span className="xl:hidden">Logout</span>
+          </button>
+
           {/* AI Badge */}
-          <div className="hidden lg:flex items-center gap-1.5 text-xs bg-blue-500/10 border border-blue-500/30 text-blue-400 px-2.5 py-1 rounded-md font-medium whitespace-nowrap">
+          {/* <div className="hidden lg:flex items-center gap-1.5 text-xs bg-blue-500/10 border border-blue-500/30 text-blue-400 px-2.5 py-1 rounded-md font-medium whitespace-nowrap">
             <Sparkles className="w-3.5 h-3.5" />
             Gemini 3.6
-          </div>
+          </div> */}
 
           {/* Mobile Menu Hamburger Trigger Button */}
           <button
@@ -159,7 +210,11 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="md:hidden p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-all border border-slate-700 flex items-center justify-center min-w-[38px] min-h-[38px] cursor-pointer"
             aria-label="Toggle Navigation Menu"
           >
-            {mobileMenuOpen ? <X className="w-5 h-5 text-cyan-400" /> : <Menu className="w-5 h-5 text-slate-200" />}
+            {mobileMenuOpen ? (
+              <X className="w-5 h-5 text-cyan-400" />
+            ) : (
+              <Menu className="w-5 h-5 text-slate-200" />
+            )}
           </button>
         </div>
       </div>
@@ -174,10 +229,11 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium text-xs transition-all whitespace-nowrap cursor-pointer flex-shrink-0 ${isActive
-                  ? 'bg-cyan-600 text-white shadow-md shadow-cyan-600/30 font-semibold'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-800/60'
-                  }`}
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg font-medium text-xs transition-all whitespace-nowrap cursor-pointer flex-shrink-0 ${
+                  isActive
+                    ? "bg-cyan-600 text-white shadow-md shadow-cyan-600/30 font-semibold"
+                    : "text-slate-300 hover:text-white hover:bg-slate-800/60"
+                }`}
               >
                 <Icon className="w-4 h-4 flex-shrink-0" />
                 <span>{item.label}</span>
@@ -192,7 +248,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         <div className="md:hidden bg-slate-950 border-t border-b border-slate-800 px-4 py-3 space-y-1.5 shadow-2xl animate-in slide-in-from-top duration-200 max-h-[80vh] overflow-y-auto">
           <div className="flex items-center justify-between px-2 pb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
             <span>Navigation Menu</span>
-            <span className="text-cyan-400">7 Active Modules</span>
+            <span className="text-cyan-400">{navItems.length} Active Modules</span>
           </div>
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -201,12 +257,15 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={item.id}
                 onClick={() => handleTabClick(item.id)}
-                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer min-h-[44px] ${isActive
-                  ? 'bg-cyan-600 text-white font-semibold shadow-md shadow-cyan-600/30'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-900 active:bg-slate-800'
-                  }`}
+                className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-xs transition-all cursor-pointer min-h-[44px] ${
+                  isActive
+                    ? "bg-cyan-600 text-white font-semibold shadow-md shadow-cyan-600/30"
+                    : "text-slate-300 hover:text-white hover:bg-slate-900 active:bg-slate-800"
+                }`}
               >
-                <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-white' : 'text-cyan-400'}`} />
+                <Icon
+                  className={`w-4 h-4 flex-shrink-0 ${isActive ? "text-white" : "text-cyan-400"}`}
+                />
                 <span className="truncate">{item.label}</span>
               </button>
             );

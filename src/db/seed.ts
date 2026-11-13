@@ -54,7 +54,7 @@ export async function seedDatabase() {
     if (existingPatients.length === 0) {
       console.log(`📌 Seeding ${SAMPLE_PATIENTS.length} Patients into PostgreSQL...`);
       for (const patient of SAMPLE_PATIENTS) {
-        await createPatientInDb(patient);
+        await createPatientInDb(patient, SAMPLE_TENANTS[0]?.id);
       }
       console.log('✅ Patients seeded.');
     } else {

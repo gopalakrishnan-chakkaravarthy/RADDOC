@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { HospitalTenant, Practitioner } from '../types';
 import { Building2, Save, Check, Shield, Image, Mail, Phone, MapPin, BadgeCheck, Stethoscope, Plus, Database, Loader2 } from 'lucide-react';
 import { DoctorManagementForm } from './DoctorManagementForm';
+import { AuthUser } from '../services/api';
 
 interface HospitalSettingsProps {
   tenant: HospitalTenant;
@@ -13,6 +14,7 @@ interface HospitalSettingsProps {
   onAddPractitioner: (doctor: Partial<Practitioner>) => Promise<void>;
   onUpdatePractitioner: (id: string, updated: Partial<Practitioner>) => Promise<void>;
   onDeletePractitioner: (id: string) => Promise<void>;
+  currentUser: AuthUser;
 }
 
 export const HospitalSettings: React.FC<HospitalSettingsProps> = ({
@@ -24,7 +26,8 @@ export const HospitalSettings: React.FC<HospitalSettingsProps> = ({
   onAddTenant,
   onAddPractitioner,
   onUpdatePractitioner,
-  onDeletePractitioner
+  onDeletePractitioner,
+  currentUser
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'branding' | 'doctors'>('branding');
   const [form, setForm] = useState<HospitalTenant>({ ...tenant });
@@ -161,7 +164,7 @@ export const HospitalSettings: React.FC<HospitalSettingsProps> = ({
               </select>
             </div>
 
-            <button
+            {currentUser.role === 'system_admin' && <button
               type="button"
               onClick={() => setShowAddModal(true)}
               className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-400 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-all"
@@ -169,7 +172,7 @@ export const HospitalSettings: React.FC<HospitalSettingsProps> = ({
             >
               <Plus className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Add Hospital</span>
-            </button>
+            </button>}
           </div>
         )}
       </div>
