@@ -5,6 +5,7 @@
 
 import { jsPDF } from 'jspdf';
 import { ClinicalDocument, HospitalTenant } from '../types';
+import { getDisplayFindings, getFormattedObservationGroups } from './reportFormatting';
 
 /**
  * Constructs a vector PDF document using jsPDF
@@ -192,13 +193,14 @@ export function generateRadiologyPdf(doc: ClinicalDocument, tenant: HospitalTena
   // ==========================================
   // 4. STRUCTURED MEASUREMENTS / OBSERVATIONS
   // ==========================================
-  if (doc?.observations && Object.keys(doc.observations).length > 0) {
+  const observationGroups = getFormattedObservationGroups(doc);
+  if (observationGroups.length > 0) {
     checkPageBreak(30);
 
     pdf.setFont('helvetica', 'bold');
     pdf.setFontSize(10);
     pdf.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-    pdf.text('STRUCTURED PROTOCOL MEASUREMENTS', marginX, y);
+    pdf.text('STRUCTURED OBSERVATIONS', marginX, y);
     y += 4;
 
     pdf.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
@@ -206,25 +208,33 @@ export function generateRadiologyPdf(doc: ClinicalDocument, tenant: HospitalTena
     pdf.line(marginX, y, marginX + contentWidth, y);
     y += 4;
 
-    pdf.setFontSize(8.5);
-    const obsEntries = Object.entries(doc.observations);
-    obsEntries.forEach(([key, obs]) => {
-      checkPageBreak(6);
-      const valStr = typeof obs === 'object' && obs !== null ? `${obs.value || ''} ${obs.unit || ''}`.trim() : String(obs);
-      if (valStr) {
+    observationGroups.forEach(group => {
+      checkPageBreak(10);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8.5);
+      pdf.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      pdf.text(group.category.toUpperCase(), marginX + 2, y);
+      y += 4.5;
+
+      group.observations.forEach(observation => {
+        pdf.setFontSize(8.5);
+        const labelLines = pdf.splitTextToSize(observation.label, 58);
+        const valueLines = pdf.splitTextToSize(observation.value, contentWidth - 68);
+        const lineCount = Math.max(labelLines.length, valueLines.length);
+        const rowHeight = lineCount * 4.2 + 1;
+        checkPageBreak(rowHeight);
         pdf.setFont('helvetica', 'bold');
         pdf.setTextColor(darkTextColor[0], darkTextColor[1], darkTextColor[2]);
-        pdf.text(`• ${key}:`, marginX + 3, y);
+        pdf.text(labelLines, marginX + 3, y);
         pdf.setFont('helvetica', 'normal');
         pdf.setTextColor(mutedTextColor[0], mutedTextColor[1], mutedTextColor[2]);
-        pdf.text(valStr, marginX + 50, y);
-        y += 5;
-      }
+        pdf.text(valueLines, marginX + 68, y);
+        y += rowHeight;
+      });
+      y += 2;
     });
     y += 4;
   }
-
-  // ==========================================
   // 5. FINDINGS / NARRATIVE SECTION
   // ==========================================
   checkPageBreak(30);
@@ -243,7 +253,7 @@ export function generateRadiologyPdf(doc: ClinicalDocument, tenant: HospitalTena
   pdf.setFontSize(9);
   pdf.setTextColor(darkTextColor[0], darkTextColor[1], darkTextColor[2]);
 
-  const findings = doc?.findingsText || 'Examination performed as per standard radiology protocol. No significant abnormality detected on routine screening.';
+  const findings = getDisplayFindings(doc);
   const splitFindings = pdf.splitTextToSize(findings, contentWidth);
   
   splitFindings.forEach((line: string) => {

@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { ObservationData, AIServiceResults } from '../src/types';
+import { formatObservationGroups } from '../src/services/reportFormatting';
 
 // Initialize Gemini Client with standard headers
 const ai = new GoogleGenAI({
@@ -42,7 +43,9 @@ Format as clean paragraphs grouped by anatomical structures (e.g. LIVER, GALLBLA
     return response.text || 'Findings narrative drafting failed.';
   } catch (error: any) {
     console.error('Gemini Narrative Error:', error);
-    return `FINDINGS DRAFT (Deterministic Fallback):\nStructured evaluation of ${templateName} performed. Structured findings: ${Object.entries(observations).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v.value} ${v.unit || ''}`).join('; ')}.`;
+    const groups = formatObservationGroups(observations, undefined, templateName);
+    return groups.map(group => `${group.category}: ${group.observations.map(item => `${item.label}: ${item.value}`).join('; ')}.`).join('\n\n') ||
+      `Structured evaluation of ${templateName} performed. No measurements were recorded.`;
   }
 }
 

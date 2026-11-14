@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import { ClinicalDocument, HospitalTenant } from '../types';
 import { downloadReportPdf, printReportPdf } from '../services/pdfGenerator';
+import { getDisplayFindings, getFormattedObservationGroups } from '../services/reportFormatting';
 import { Printer, Download, CheckCircle2, ShieldCheck, X, FileText, FileCode } from 'lucide-react';
 
 interface PdfReportPreviewProps {
@@ -11,6 +12,8 @@ interface PdfReportPreviewProps {
 
 export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: doc, tenant, onClose }) => {
   const reportContentRef = useRef<HTMLDivElement>(null);
+  const observationGroups = getFormattedObservationGroups(doc);
+  const displayFindings = getDisplayFindings(doc);
 
   const handlePrint = () => {
     window.print();
@@ -148,23 +151,20 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
               )}
             </div>
 
-            {/* Structured Key Measurements Summary Grid */}
-            <div className="space-y-2">
+            {/* Structured Observations Summary */}
+            {observationGroups.length > 0 && <div className="space-y-3">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 border-b border-slate-200 pb-1">
-                Key Structured Measurements & Observations
+                Structured Observations
               </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                {Object.entries(doc.observations).map(([key, obs]) => {
-                  const o = obs as any;
-                  return (
-                    <div key={key} className="bg-slate-50 p-2 rounded border border-slate-200">
-                      <span className="text-slate-500 capitalize block text-[10px]">{key.replace(/_/g, ' ')}</span>
-                      <span className="font-semibold text-slate-900">{String(o?.value ?? '')} {o?.unit || ''}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+              {observationGroups.map(group => <div key={group.category} className="space-y-1">
+                <h4 className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{group.category}</h4>
+                <div className="grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-2">
+                  {group.observations.map(item => <div key={item.label} className="flex justify-between gap-3 border-b border-slate-100 px-1 py-1.5">
+                    <span className="text-slate-600">{item.label}</span><span className="text-right font-semibold text-slate-900">{item.value}</span>
+                  </div>)}
+                </div>
+              </div>)}
+            </div>}
 
             {/* FINDINGS Narrative Section */}
             <div className="space-y-2">
@@ -172,7 +172,7 @@ export const PdfReportPreview: React.FC<PdfReportPreviewProps> = ({ document: do
                 FINDINGS
               </h3>
               <div className="text-sm leading-relaxed text-slate-800 whitespace-pre-line font-sans">
-                {doc.findingsText || 'No narrative findings recorded.'}
+                {displayFindings}
               </div>
             </div>
 

@@ -423,7 +423,7 @@ export default function App() {
           <AuditTrailView />
         )}
 
-        {activeTab === 'reporting' && <ReportingView />}
+        {activeTab === 'reporting' && <ReportingView tenant={selectedTenant} />}
 
         {activeTab === 'api' && activeDocument && (
           <ApiExplorer document={activeDocument} />

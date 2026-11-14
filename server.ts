@@ -505,7 +505,7 @@ app.get('/api/v1/reports/search', async (req, res) => {
     const patientRows = useDatabaseDataMode
       ? await getDbPool().query('SELECT id, name, phone FROM patients WHERE tenant_id = $1', [tenantId])
       : { rows: [] as Array<{ id: string; name: string; phone: string }> };
-    const currentPatients = new Map(patientRows.rows.map(patient => [patient.id, patient]));
+    const currentPatients = new Map<string, { id: string; name: string; phone: string | null }>(patientRows.rows.map((patient: { id: string; name: string; phone: string | null }) => [patient.id, patient] as const));
     const reportsWithCurrentPatientData = allReports.map(report => {
       const patient = currentPatients.get(report.patient?.id || '');
       return patient ? { ...report, patient: { ...report.patient, name: patient.name, phone: patient.phone || undefined } } : report;
@@ -539,6 +539,33 @@ app.get('/api/v1/invoices', async (req, res) => {
     const result = await getDbPool().query(query, params);
     res.json({ count: result.rows.length, invoices: result.rows });
   } catch (err: any) { res.status(500).json({ error: 'Failed to fetch invoices', message: err.message }); }
+});
+
+app.post('/api/v1/invoices', async (req, res) => {
+  try {
+    const tenantId = currentUser(req).tenantId!;
+    const documentId = String(req.body.documentId || '').trim();
+    const amount = Number(req.body.amount);
+    if (!documentId) return res.status(400).json({ error: 'Select a report for this invoice.' });
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 9999999999) return res.status(400).json({ error: 'Enter a valid positive invoice amount.' });
+    const doc = useDatabaseDataMode
+      ? await getDocumentByIdFromDb(documentId, tenantId)
+      : HISTORICAL_DOCUMENTS.find(item => item.id === documentId && item.tenantId === tenantId);
+    if (!doc) return res.status(404).json({ error: 'Report not found in your hospital.' });
+    const invoiceNumber = `INV-${new Date().getFullYear()}-${randomBytes(5).toString('hex').toUpperCase()}`;
+    const currency = (process.env.REPORT_CURRENCY || 'INR').toUpperCase().slice(0, 3);
+    const result = await getDbPool().query(`INSERT INTO invoices (
+      id, invoice_number, document_id, tenant_id, patient_id, patient_name,
+      mobile_number, diagnostic_type, amount, currency, status
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'ISSUED')
+    ON CONFLICT (document_id) DO NOTHING RETURNING *`, [
+      `inv-${randomBytes(12).toString('hex')}`, invoiceNumber, doc.id, tenantId,
+      doc.patient?.id || null, doc.patient?.name || 'Patient', doc.patient?.phone || null,
+      doc.templateName || doc.modality, amount, currency
+    ]);
+    if (!result.rows[0]) return res.status(409).json({ error: 'An invoice already exists for this report.' });
+    res.status(201).json({ invoice: result.rows[0] });
+  } catch (err: any) { res.status(500).json({ error: 'Failed to create invoice', message: err.message }); }
 });
 
 app.put('/api/v1/invoices/:id', async (req, res) => {

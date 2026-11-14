@@ -68,6 +68,15 @@ export async function updateInvoice(id: string, updates: { amount?: number; stat
   return data.invoice;
 }
 
+export async function createInvoice(documentId: string, amount: number): Promise<InvoiceRecord> {
+  const response = await apiFetch(`${API_BASE}/invoices`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documentId, amount })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not create invoice.');
+  return data.invoice;
+}
+
 export interface HospitalMappings {
   users: Array<{ id: string; name: string; email: string; role: string; tenant_id: string | null; tenant_name: string | null }>;
   tenants: HospitalTenant[];

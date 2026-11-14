@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClinicalDocument, TemplateDefinition, Practitioner, Patient, HospitalTenant } from '../types';
 import { VoiceRecording } from './VoiceRecording';
+import { getDisplayFindings } from '../services/reportFormatting';
 import {
   triggerAIGeneration,
   validateDocument,
@@ -998,7 +999,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                     Step 4 & 5: FINDINGS (AI Generated Narrative)
                   </label>
                   <textarea
-                    value={doc.findingsText}
+                    value={getDisplayFindings(doc)}
                     onChange={(e) => onDocumentChange({ ...doc, findingsText: e.target.value })}
                     rows={8}
                     placeholder="Click 'Generate Gemini AI Draft' or type findings prose..."
@@ -1100,7 +1101,7 @@ export const ReportStudio: React.FC<ReportStudioProps> = ({
                 <div>
                   <span className="font-bold text-xs text-slate-800 uppercase block mb-1">Findings Editor</span>
                   <textarea
-                    value={doc.findingsText}
+                    value={getDisplayFindings(doc)}
                     onChange={(e) => onDocumentChange({ ...doc, findingsText: e.target.value })}
                     rows={8}
                     className="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs leading-relaxed focus:ring-2 focus:ring-cyan-500"
