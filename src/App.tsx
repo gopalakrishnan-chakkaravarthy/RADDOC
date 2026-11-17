@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefinition, Modality } from './types';
 import {
   getTenants,
@@ -47,12 +48,15 @@ import { PdfReportPreview } from './components/PdfReportPreview';
 import { HospitalMappings } from './components/HospitalMappings';
 import { ReportingView } from './components/ReportingView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { AppDispatch, RootState } from './store';
+import { clearCurrentTenant, setCurrentTenant } from './store/tenantSlice';
 
 export default function App() {
+  const dispatch = useDispatch<AppDispatch>();
+  const selectedTenant = useSelector((state: RootState) => state.tenant.currentTenant);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [tenants, setTenants] = useState<HospitalTenant[]>(SAMPLE_TENANTS);
-  const [selectedTenant, setSelectedTenant] = useState<HospitalTenant | null>(SAMPLE_TENANTS[0]);
   const [practitioners, setPractitioners] = useState<Practitioner[]>(SAMPLE_PRACTITIONERS);
   const [patients, setPatients] = useState<Patient[]>(SAMPLE_PATIENTS);
   const [templates, setTemplates] = useState<TemplateDefinition[]>(RADIOLOGY_TEMPLATES);
@@ -62,6 +66,7 @@ export default function App() {
   const [showPdfModal, setShowPdfModal] = useState<boolean>(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [reportOpenError, setReportOpenError] = useState(false);
+  const [tenantLoadError, setTenantLoadError] = useState('');
   const [loading, setLoading] = useState<boolean>(true);
   const [isComparing, setIsComparing] = useState<boolean>(false);
   const [dataSourceMode, setDataSourceMode] = useState<{ useDatabaseData: boolean; dataSource: 'DATABASE' | 'SAMPLE'; dbConnected: boolean }>({
@@ -79,7 +84,7 @@ export default function App() {
       window.sessionStorage.clear();
       setAuthUser(null);
       setTenants(SAMPLE_TENANTS);
-      setSelectedTenant(null);
+      dispatch(clearCurrentTenant());
       setPractitioners(SAMPLE_PRACTITIONERS);
       setPatients(SAMPLE_PATIENTS);
       setTemplates(RADIOLOGY_TEMPLATES);
@@ -110,9 +115,13 @@ export default function App() {
     if (!authUser) { setLoading(false); return; }
     async function initData() {
       setLoading(true);
+      setTenantLoadError('');
       try {
         const [tenantsData, practData, patData, tmplData, docsData, dsConfig] = await Promise.all([
-          getTenants().catch(() => []),
+          getTenants().catch(err => {
+            setTenantLoadError(err instanceof Error ? err.message : 'Could not load hospital details.');
+            return [];
+          }),
           getPractitioners().catch(() => SAMPLE_PRACTITIONERS),
           getPatients().catch(() => []),
           getTemplates().catch(() => RADIOLOGY_TEMPLATES),
@@ -121,7 +130,9 @@ export default function App() {
         ]);
 
         setTenants(tenantsData || []);
-        setSelectedTenant(tenantsData?.[0] || null);
+        dispatch(setCurrentTenant(
+          tenantsData?.find(tenant => tenant.id === authUser?.tenantId) || tenantsData?.[0] || null
+        ));
         if (practData && practData.length > 0) setPractitioners(practData);
         setPatients(patData || []);
         if (tmplData && tmplData.length > 0) setTemplates(tmplData);
@@ -150,7 +161,7 @@ export default function App() {
     }
 
     initData();
-  }, [authChecked, authUser]);
+  }, [authChecked, authUser, dispatch]);
 
   const handleToggleDataSource = async () => {
     try {
@@ -174,7 +185,7 @@ export default function App() {
   };
 
   const handleSelectTenant = (tenant: HospitalTenant) => {
-    setSelectedTenant(tenant);
+    dispatch(setCurrentTenant(tenant));
   };
 
   const handleCreateNewStudy = async (patient: Patient, templateId: string, modality: string) => {
@@ -336,7 +347,7 @@ export default function App() {
   }
 
   if (!authUser) return <AuthScreen onAuthenticated={(user) => { setLoading(true); setAuthUser(user); if (user.role === 'system_admin') setActiveTab('user-hospital-mapping'); }} />;
-  if (!selectedTenant && authUser.role !== 'system_admin') return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center text-slate-100"><div><h1 className="text-xl font-bold">No hospital is assigned to this account</h1><p className="mt-2 text-sm text-slate-400">Ask an administrator to assign your login to a hospital.</p><button onClick={handleLogout} className="mt-5 rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-950">Sign out</button></div></div>;
+  if (!selectedTenant && authUser.role !== 'system_admin') return <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6 text-center text-slate-100"><div><h1 className="text-xl font-bold">Hospital details could not be loaded</h1><p className="mt-2 text-sm text-slate-400">{tenantLoadError || (authUser.tenantId ? `This account is assigned to hospital ${authUser.tenantId}, but its hospital record was not returned by the server.` : 'The signed-in account has no hospital ID. Confirm the assignment in User & Hospital Mapping, then sign in again.')}</p><button onClick={handleLogout} className="mt-5 rounded-lg bg-emerald-500 px-4 py-2 font-semibold text-slate-950">Sign out</button></div></div>;
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans antialiased text-slate-800 relative">
@@ -364,7 +375,7 @@ export default function App() {
       {/* Main Clinical Intelligence Engine Application Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 space-y-6">
         {reportOpenError && <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">This report could not be found or is not available to your hospital account.</div>}
-        {activeTab === 'studio' && activeDocument && (
+        {activeTab === 'studio' && activeDocument ? (
           <ReportStudio
             document={activeDocument}
             tenant={selectedTenant}
@@ -383,7 +394,13 @@ export default function App() {
             onOpenPdf={() => setShowPdfModal(true)}
             onOpenPdfPreview={() => setShowPdfModal(true)}
           />
-        )}
+        ) : activeTab === 'studio' ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">No report is open</h2>
+            <p className="mt-2 text-sm text-slate-600">Create a study in Clinical Queue to open it in Report Studio.</p>
+            <button onClick={() => setActiveTab('queue')} className="mt-5 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600">Open Clinical Queue</button>
+          </div>
+        ) : null}
 
         {activeTab === 'queue' && (
           <ClinicalQueue
@@ -403,7 +420,7 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'comparison' && activeDocument && (
+        {activeTab === 'comparison' && activeDocument ? (
           <ComparisonEngineView
             currentDocument={activeDocument}
             historicalDocuments={documents}
@@ -413,7 +430,13 @@ export default function App() {
             onRunComparison={handleRunComparativeAnalysis}
             isComparing={isComparing}
           />
-        )}
+        ) : activeTab === 'comparison' ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+            <h2 className="text-lg font-bold text-slate-900">No study selected</h2>
+            <p className="mt-2 text-sm text-slate-600">Open or create a study in Clinical Queue before comparing it with previous studies.</p>
+            <button onClick={() => setActiveTab('queue')} className="mt-5 rounded-lg bg-cyan-700 px-4 py-2 text-sm font-semibold text-white hover:bg-cyan-600">Open Clinical Queue</button>
+          </div>
+        ) : null}
 
         {activeTab === 'fhir' && activeDocument && (
           <FhirInspectorView document={activeDocument} />
@@ -443,18 +466,18 @@ export default function App() {
             onUpdateTenant={async (updatedTenant) => {
               try {
                 const saved = await updateTenant(updatedTenant.id, updatedTenant);
-                setSelectedTenant(saved);
+                dispatch(setCurrentTenant(saved));
                 setTenants(prev => prev.map(t => t.id === saved.id ? saved : t));
               } catch (err) {
                 console.error('Failed to update tenant in DB:', err);
-                setSelectedTenant(updatedTenant);
+                dispatch(setCurrentTenant(updatedTenant));
               }
             }}
             onAddTenant={async (newTenantData) => {
               try {
                 const created = await createTenant(newTenantData);
                 setTenants(prev => [...prev, created]);
-                setSelectedTenant(created);
+                dispatch(setCurrentTenant(created));
               } catch (err) {
                 console.error('Failed to add tenant to DB:', err);
                 throw err;

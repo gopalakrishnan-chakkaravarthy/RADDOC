@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
-import { ClinicalDocument, TemplateDefinition, Patient, HospitalTenant } from '../types';
+import { useSelector } from 'react-redux';
+import { ClinicalDocument, TemplateDefinition, Patient } from '../types';
 import { createDocument, createPatient } from '../services/api';
+import { RootState } from '../store';
 import { Layers, Plus, Stethoscope, Search, Calendar, ChevronRight, User, ShieldCheck } from 'lucide-react';
 
 interface ClinicalQueueProps {
   documents: ClinicalDocument[];
   templates: TemplateDefinition[];
   patients: Patient[];
-  tenant: HospitalTenant;
   activeDocId: string;
   onSelectDocument: (doc: ClinicalDocument) => void;
   onDocumentCreated: (doc: ClinicalDocument) => void;
@@ -17,11 +18,11 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
   documents = [],
   templates = [],
   patients = [],
-  tenant,
   activeDocId,
   onSelectDocument,
   onDocumentCreated
 }) => {
+  const tenant = useSelector((state: RootState) => state.tenant.currentTenant);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || 'usg-abdomen');
   const [selectedPatientId, setSelectedPatientId] = useState(patients[0]?.id || '');
@@ -29,12 +30,34 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
   
   // New Patient Form State
   const [newPatientName, setNewPatientName] = useState('');
-  const [newPatientAge, setNewPatientAge] = useState<number | ''>(45);
   const [newPatientGender, setNewPatientGender] = useState<'Male' | 'Female' | 'Other'>('Male');
   const [newPatientPhone, setNewPatientPhone] = useState('');
   const [newPatientDob, setNewPatientDob] = useState('');
+
+  const today = new Date();
+  const maxDob = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const earliestDobDate = new Date(today.getFullYear() - 100, today.getMonth(), today.getDate());
+  const minDob = `${earliestDobDate.getFullYear()}-${String(earliestDobDate.getMonth() + 1).padStart(2, '0')}-${String(earliestDobDate.getDate()).padStart(2, '0')}`;
+  const calculateAgeInYears = (dob: string) => {
+    if (!dob) return 0;
+    const [year, month, day] = dob.split('-').map(Number);
+    let age = today.getFullYear() - year;
+    if (today.getMonth() + 1 < month || (today.getMonth() + 1 === month && today.getDate() < day)) age -= 1;
+    return age;
+  };
+  const calculateAgeDisplay = (dob: string) => {
+    if (!dob) return '';
+    const [year, month, day] = dob.split('-').map(Number);
+    let months = (today.getFullYear() - year) * 12 + today.getMonth() + 1 - month;
+    if (today.getDate() < day) months -= 1;
+    if (months < 12) return `${months} ${months === 1 ? 'month' : 'months'}`;
+    const years = calculateAgeInYears(dob);
+    return `${years} ${years === 1 ? 'year' : 'years'}`;
+  };
+  const newPatientAge = calculateAgeDisplay(newPatientDob);
   
   const [isCreating, setIsCreating] = useState(false);
+  const [formError, setFormError] = useState('');
 
   const filteredDocs = (documents || []).filter(d =>
     (d.patient?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -44,23 +67,39 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
 
   const handleCreateNew = async (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
+    if (patientMode === 'new' && (!newPatientDob || newPatientDob < minDob || newPatientDob > maxDob)) return;
+    const template = templates.find(t => t.id === selectedTemplateId) || templates[0];
+    if (!tenant) {
+      setFormError('No hospital is selected for this account. Ask an administrator to assign a hospital before creating a study.');
+      return;
+    }
+    if (!template) {
+      setFormError('No study templates are available. Ask an administrator to configure templates before creating a study.');
+      return;
+    }
+    const selectedPatient = patientMode === 'existing'
+      ? patients.find(p => p.id === selectedPatientId) || patients[0]
+      : undefined;
+    if (patientMode === 'existing' && !selectedPatient) {
+      setFormError('Select an existing patient or register a new patient first.');
+      return;
+    }
     setIsCreating(true);
     try {
-      const template = templates.find(t => t.id === selectedTemplateId) || templates[0];
-      
       let patient: Patient;
       if (patientMode === 'new') {
         const createdPatient = await createPatient({
           patientId: `PAT-2026-${Math.floor(1000 + Math.random() * 9000)}`,
           name: newPatientName.trim() || 'New Patient',
-          age: typeof newPatientAge === 'number' ? newPatientAge : 40,
+          age: calculateAgeInYears(newPatientDob),
           gender: newPatientGender,
           phone: newPatientPhone.trim() || undefined,
           dob: newPatientDob || undefined
         });
         patient = createdPatient;
       } else {
-        patient = patients.find(p => p.id === selectedPatientId) || patients[0];
+        patient = selectedPatient!;
       }
 
       // Build default observation object from template fields
@@ -181,6 +220,8 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
               <p className="text-slate-500 mt-0.5">Initialize structured clinical schema for new patient study.</p>
             </div>
 
+            {formError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700">{formError}</p>}
+
             {/* Patient Mode Tabs */}
             <div className="space-y-2">
               <label className="font-bold text-slate-800 block">Patient Selection</label>
@@ -239,17 +280,27 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
                   />
                 </div>
 
+                <div className="space-y-1">
+                  <label className="font-bold text-slate-800 block">Date of Birth (DOB) *</label>
+                  <input
+                    type="date"
+                    required
+                    min={minDob}
+                    max={maxDob}
+                    value={newPatientDob}
+                    onChange={(e) => setNewPatientDob(e.target.value)}
+                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-semibold text-slate-900 focus:ring-2 focus:ring-cyan-500 focus:outline-none"
+                  />
+                </div>
+
                 <div className="grid grid-cols-2 gap-2">
                   <div className="space-y-1">
-                    <label className="font-bold text-slate-800 block">Age (Yrs) *</label>
+                    <label className="font-bold text-slate-800 block">Age (Yrs)</label>
                     <input
-                      type="number"
-                      required
-                      min="0"
-                      max="120"
+                      type="text"
+                      readOnly
                       value={newPatientAge}
-                      onChange={(e) => setNewPatientAge(e.target.value ? parseInt(e.target.value, 10) : '')}
-                      placeholder="e.g. 35"
+                      placeholder="Calculated from DOB"
                       className="w-full bg-white border border-slate-300 rounded-lg p-2 font-semibold text-slate-900 focus:ring-2 focus:ring-cyan-500 focus:outline-none"
                     />
                   </div>
@@ -279,15 +330,6 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
                   />
                 </div>
 
-                <div className="space-y-1">
-                  <label className="font-bold text-slate-800 block">Date of Birth (DOB)</label>
-                  <input
-                    type="date"
-                    value={newPatientDob}
-                    onChange={(e) => setNewPatientDob(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 font-semibold text-slate-900 focus:ring-2 focus:ring-cyan-500 focus:outline-none"
-                  />
-                </div>
               </div>
             )}
 
@@ -309,7 +351,7 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
             <button
               type="submit"
               disabled={isCreating}
-              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white p-3 rounded-xl font-bold text-xs shadow-lg shadow-cyan-600/20 cursor-pointer transition-all"
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white p-3 rounded-xl font-bold text-xs shadow-lg shadow-cyan-600/20 cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Stethoscope className="w-4 h-4" />
               {isCreating ? 'Creating Study...' : 'Initialize Structured Study'}

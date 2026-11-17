@@ -325,7 +325,9 @@ function isAdmin(req: express.Request, res: express.Response) {
 app.get('/api/v1/tenants', async (req, res) => {
   try {
     const user = currentUser(req);
-    const allTenants = useDatabaseDataMode ? await getTenantsFromDb() : SAMPLE_TENANTS;
+    // Hospital membership is stored in the database and must stay authoritative
+    // even when clinical records are switched to sample data.
+    const allTenants = await getTenantsFromDb();
     const tenants = user.role === 'system_admin' ? allTenants : allTenants.filter(tenant => tenant.id === user.tenantId);
     res.json({ tenants });
   } catch (err: any) {

@@ -132,6 +132,7 @@ async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Promise<R
 export async function getTenants(): Promise<HospitalTenant[]> {
   const res = await apiFetch(`${API_BASE}/tenants`);
   const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not load the hospital assigned to this account.');
   return data.tenants || [];
 }
 
