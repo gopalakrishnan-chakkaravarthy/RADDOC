@@ -35,6 +35,8 @@ export async function runMigrations() {
     console.log(' 4. templates');
     console.log(' 5. clinical_documents');
     console.log(' 6. audit_logs');
+    console.log(' 7. subscription_plans');
+    console.log(' 8. hospital_subscriptions');
   } catch (err: any) {
     console.error('❌ Error executing database migrations:', err.message);
     throw err;

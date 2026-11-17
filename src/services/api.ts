@@ -2,7 +2,32 @@ import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefini
 
 export const API_BASE = '/api/v1';
 
-export interface AuthUser { id: string; name: string; email: string; tenantId: string | null; role: 'system_admin' | 'admin' | 'user' }
+export interface SubscriptionPlan {
+  id: string;
+  code: string;
+  name: string;
+  annualPriceUsd: number;
+  maxUsers: number | null;
+  annualReportLimit: number | null;
+  isActive: boolean;
+}
+
+export interface SubscriptionSummary {
+  tenantId: string;
+  plan: SubscriptionPlan;
+  status: 'ACTIVE' | 'CANCELLED' | 'EXPIRED';
+  currentPeriodStart: string;
+  currentPeriodEnd: string;
+  reportsUsed: number;
+  usersCount: number;
+}
+
+export interface AuthUser { id: string; name: string; email: string; tenantId: string | null; role: 'system_admin' | 'admin' | 'user'; subscription?: SubscriptionSummary | null }
+
+export interface SubscriptionManagementData {
+  plans: SubscriptionPlan[];
+  hospitals: Array<{ tenantId: string; hospitalName: string; subscription: SubscriptionSummary | null }>;
+}
 
 async function authRequest<T>(path: string, body?: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}/auth/${path}`, {
@@ -94,6 +119,38 @@ export async function mapUserToHospital(userId: string, tenantId: string) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Could not map user to hospital.');
   return data.user;
+}
+
+export async function getSubscriptionManagement(): Promise<SubscriptionManagementData> {
+  const response = await apiFetch(`${API_BASE}/system-admin/subscriptions`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load subscription plans.');
+  return data;
+}
+
+export async function getCurrentSubscription(): Promise<SubscriptionSummary | null> {
+  const response = await apiFetch(`${API_BASE}/subscription/current`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load the hospital subscription.');
+  return data.subscription || null;
+}
+
+export async function assignHospitalPlan(tenantId: string, planId: string): Promise<SubscriptionSummary> {
+  const response = await apiFetch(`${API_BASE}/system-admin/hospitals/${encodeURIComponent(tenantId)}/subscription`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not assign the subscription plan.');
+  return data.subscription;
+}
+
+export async function updateSubscriptionPlan(planId: string, updates: Pick<SubscriptionPlan, 'annualPriceUsd' | 'maxUsers' | 'annualReportLimit' | 'isActive'>): Promise<SubscriptionPlan> {
+  const response = await apiFetch(`${API_BASE}/system-admin/plans/${encodeURIComponent(planId)}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updates)
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not update the subscription plan.');
+  return data.plan;
 }
 
 // Global API Request Listener State Tracker
@@ -245,14 +302,15 @@ export async function getDocumentById(id: string): Promise<ClinicalDocument> {
   return data.document;
 }
 
-export async function createDocument(payload: Partial<ClinicalDocument>): Promise<ClinicalDocument> {
+export async function createDocument(payload: Partial<ClinicalDocument>): Promise<{ document: ClinicalDocument; subscription: SubscriptionSummary | null }> {
   const res = await apiFetch(`${API_BASE}/documents`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  return data.document;
+  if (!res.ok) throw new Error(data.error || 'Could not create the report.');
+  return { document: data.document, subscription: data.subscription || null };
 }
 
 export async function updateDocument(id: string, payload: Partial<ClinicalDocument>): Promise<ClinicalDocument> {

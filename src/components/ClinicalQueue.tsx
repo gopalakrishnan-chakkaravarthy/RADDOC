@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { useSelector } from 'react-redux';
+import React, { useEffect, useState } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
 import { ClinicalDocument, TemplateDefinition, Patient } from '../types';
-import { createDocument, createPatient } from '../services/api';
-import { RootState } from '../store';
+import { createDocument, createPatient, getCurrentSubscription, getTenants } from '../services/api';
+import { AppDispatch, RootState } from '../store';
+import { setCurrentSubscription, setCurrentTenant } from '../store/tenantSlice';
 import { Layers, Plus, Stethoscope, Search, Calendar, ChevronRight, User, ShieldCheck } from 'lucide-react';
 
 interface ClinicalQueueProps {
@@ -22,7 +23,9 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
   onSelectDocument,
   onDocumentCreated
 }) => {
+  const dispatch = useDispatch<AppDispatch>();
   const tenant = useSelector((state: RootState) => state.tenant.currentTenant);
+  const subscription = useSelector((state: RootState) => state.tenant.subscription);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState(templates[0]?.id || 'usg-abdomen');
   const [selectedPatientId, setSelectedPatientId] = useState(patients[0]?.id || '');
@@ -57,7 +60,49 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
   const newPatientAge = calculateAgeDisplay(newPatientDob);
   
   const [isCreating, setIsCreating] = useState(false);
+  const [isLoadingTenant, setIsLoadingTenant] = useState(!tenant);
+  const [isLoadingSubscription, setIsLoadingSubscription] = useState(true);
   const [formError, setFormError] = useState('');
+
+  useEffect(() => {
+    if (tenant) {
+      setIsLoadingTenant(false);
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingTenant(true);
+    getTenants().then(availableTenants => {
+      if (cancelled) return;
+      const assignedTenant = availableTenants[0];
+      if (assignedTenant) {
+        dispatch(setCurrentTenant(assignedTenant));
+        setFormError('');
+      } else {
+        setFormError('No hospital was returned for this account. Confirm the hospital assignment in System Admin, then sign in again.');
+      }
+    }).catch(err => {
+      if (!cancelled) setFormError(err instanceof Error ? err.message : 'Could not load the hospital assigned to this account.');
+    }).finally(() => {
+      if (!cancelled) setIsLoadingTenant(false);
+    });
+
+    return () => { cancelled = true; };
+  }, [tenant, dispatch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCurrentSubscription().then(currentSubscription => {
+      if (cancelled) return;
+      dispatch(setCurrentSubscription(currentSubscription));
+      if (!currentSubscription) setFormError('No subscription plan is assigned to this hospital. Contact the system administrator.');
+    }).catch(err => {
+      if (!cancelled) setFormError(err instanceof Error ? err.message : 'Could not load the hospital subscription.');
+    }).finally(() => {
+      if (!cancelled) setIsLoadingSubscription(false);
+    });
+    return () => { cancelled = true; };
+  }, [dispatch]);
 
   const filteredDocs = (documents || []).filter(d =>
     (d.patient?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -69,6 +114,18 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
     e.preventDefault();
     setFormError('');
     if (patientMode === 'new' && (!newPatientDob || newPatientDob < minDob || newPatientDob > maxDob)) return;
+    if (!subscription) {
+      setFormError('No subscription plan is assigned to this hospital. Contact the system administrator.');
+      return;
+    }
+    if (subscription.status !== 'ACTIVE') {
+      setFormError('The hospital subscription is expired or inactive. Contact the system administrator to renew it.');
+      return;
+    }
+    if (subscription.plan.annualReportLimit !== null && subscription.reportsUsed >= subscription.plan.annualReportLimit) {
+      setFormError(`This hospital has reached its annual limit of ${subscription.plan.annualReportLimit.toLocaleString()} reports. Upgrade or renew the subscription to create more reports.`);
+      return;
+    }
     const template = templates.find(t => t.id === selectedTemplateId) || templates[0];
     if (!tenant) {
       setFormError('No hospital is selected for this account. Ask an administrator to assign a hospital before creating a study.');
@@ -111,7 +168,7 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
         };
       });
 
-      const newDoc = await createDocument({
+      const { document: newDoc, subscription } = await createDocument({
         tenantId: tenant.id,
         patient,
         templateId: template.id,
@@ -122,9 +179,11 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
         referringPhysician: 'Dr. V. Ramanathan, MD (Gen Med)'
       });
 
+      dispatch(setCurrentSubscription(subscription));
       onDocumentCreated(newDoc);
     } catch (err) {
       console.error(err);
+      setFormError(err instanceof Error ? err.message : 'Could not create the study.');
     } finally {
       setIsCreating(false);
     }
@@ -221,6 +280,7 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
             </div>
 
             {formError && <p role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-rose-700">{formError}</p>}
+            {subscription && <p className="rounded-lg bg-cyan-50 px-3 py-2 text-cyan-900">Plan: <strong>{subscription.plan.name}</strong> · {subscription.reportsUsed.toLocaleString()}/{subscription.plan.annualReportLimit?.toLocaleString() ?? '∞'} annual reports</p>}
 
             {/* Patient Mode Tabs */}
             <div className="space-y-2">
@@ -350,11 +410,11 @@ export const ClinicalQueue: React.FC<ClinicalQueueProps> = ({
 
             <button
               type="submit"
-              disabled={isCreating}
+              disabled={isCreating || isLoadingTenant || isLoadingSubscription || !tenant || !subscription}
               className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white p-3 rounded-xl font-bold text-xs shadow-lg shadow-cyan-600/20 cursor-pointer transition-all disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Stethoscope className="w-4 h-4" />
-              {isCreating ? 'Creating Study...' : 'Initialize Structured Study'}
+              {isLoadingTenant || isLoadingSubscription ? 'Loading Subscription...' : isCreating ? 'Creating Study...' : 'Initialize Structured Study'}
             </button>
           </form>
         </div>

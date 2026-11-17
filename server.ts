@@ -100,6 +100,40 @@ function clearSessionCookie(res: express.Response) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
 }
 
+async function getSubscriptionSummary(tenantId: string | null) {
+  if (!tenantId) return null;
+  const result = await getDbPool().query(`
+    SELECT hs.tenant_id, hs.status, hs.current_period_start, hs.current_period_end, hs.reports_used,
+      p.id AS plan_id, p.code AS plan_code, p.name AS plan_name, p.annual_price_usd,
+      p.max_users, p.annual_report_limit, p.is_active,
+      (SELECT COUNT(*)::int FROM app_users u WHERE u.tenant_id = hs.tenant_id AND u.role <> 'system_admin') AS users_count
+    FROM hospital_subscriptions hs
+    JOIN subscription_plans p ON p.id = hs.plan_id
+    WHERE hs.tenant_id = $1
+  `, [tenantId]);
+  const row = result.rows[0];
+  if (!row) return null;
+  const periodEnd = new Date(row.current_period_end);
+  const status = row.status === 'ACTIVE' && periodEnd <= new Date() ? 'EXPIRED' : row.status;
+  return {
+    tenantId: row.tenant_id,
+    status,
+    currentPeriodStart: new Date(row.current_period_start).toISOString(),
+    currentPeriodEnd: periodEnd.toISOString(),
+    reportsUsed: Number(row.reports_used),
+    usersCount: Number(row.users_count),
+    plan: {
+      id: row.plan_id,
+      code: row.plan_code,
+      name: row.plan_name,
+      annualPriceUsd: Number(row.annual_price_usd),
+      maxUsers: row.max_users === null ? null : Number(row.max_users),
+      annualReportLimit: row.annual_report_limit === null ? null : Number(row.annual_report_limit),
+      isActive: row.is_active
+    }
+  };
+}
+
 app.post('/api/v1/auth/signup', async (req, res) => {
   const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -107,24 +141,49 @@ app.post('/api/v1/auth/signup', async (req, res) => {
   if (name.length < 2 || name.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 10 || password.length > 128) {
     return res.status(400).json({ error: 'Enter a valid name and email, and a password between 10 and 128 characters.' });
   }
+  const client = await getDbPool().connect();
   try {
     const salt = randomBytes(16);
     const derived = await scrypt(password, salt, 64) as Buffer;
     const id = `usr-${randomBytes(16).toString('hex')}`;
-    const result = await getDbPool().query(`INSERT INTO app_users (id, name, email, password_hash, tenant_id, role)
-      SELECT $1, $2, $3, $4, (SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1),
-        CASE WHEN NOT EXISTS (SELECT 1 FROM app_users) THEN 'admin' ELSE 'user' END
-      WHERE EXISTS (SELECT 1 FROM tenants)
-      RETURNING id, name, email, tenant_id, role, session_version`, [id, name, email, `scrypt$${salt.toString('hex')}$${derived.toString('hex')}`]);
-    if (!result.rows[0]) return res.status(503).json({ error: 'No hospital is configured yet. Please contact the system administrator.' });
+    await client.query('BEGIN');
+    const tenantResult = await client.query('SELECT id FROM tenants ORDER BY created_at ASC LIMIT 1');
+    const tenantId = tenantResult.rows[0]?.id;
+    if (!tenantId) {
+      await client.query('ROLLBACK');
+      return res.status(503).json({ error: 'No hospital is configured yet. Please contact the system administrator.' });
+    }
+    const subscriptionResult = await client.query(`
+      SELECT hs.status, hs.current_period_end, p.max_users
+      FROM hospital_subscriptions hs JOIN subscription_plans p ON p.id = hs.plan_id
+      WHERE hs.tenant_id = $1 FOR UPDATE OF hs
+    `, [tenantId]);
+    const subscription = subscriptionResult.rows[0];
+    if (!subscription || subscription.status !== 'ACTIVE' || new Date(subscription.current_period_end) <= new Date()) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'The hospital has no active subscription. Contact the system administrator.' });
+    }
+    const usersResult = await client.query("SELECT COUNT(*)::int AS count FROM app_users WHERE tenant_id = $1 AND role <> 'system_admin'", [tenantId]);
+    if (subscription.max_users !== null && Number(usersResult.rows[0].count) >= Number(subscription.max_users)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: `The hospital has reached the ${subscription.max_users}-user limit for its subscription plan.` });
+    }
+    const result = await client.query(`INSERT INTO app_users (id, name, email, password_hash, tenant_id, role)
+      VALUES ($1, $2, $3, $4, $5, CASE WHEN NOT EXISTS (SELECT 1 FROM app_users) THEN 'admin' ELSE 'user' END)
+      RETURNING id, name, email, tenant_id, role, session_version`, [id, name, email, `scrypt$${salt.toString('hex')}$${derived.toString('hex')}`, tenantId]);
+    await client.query('COMMIT');
     const row = result.rows[0];
+    const subscriptionSummary = await getSubscriptionSummary(row.tenant_id);
     const user = { id: row.id, name: row.name, email: row.email, tenantId: row.tenant_id, role: row.role };
     setSessionCookie(res, { ...user, sessionVersion: row.session_version });
-    res.status(201).json({ user });
+    res.status(201).json({ user: { ...user, subscription: subscriptionSummary } });
   } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
     if (err.code === '23505') return res.status(409).json({ error: 'An account with this email already exists.' });
     console.error('Signup failed:', err.message);
     res.status(503).json({ error: 'Signup is unavailable. Check the database connection and try again.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -143,7 +202,8 @@ app.post('/api/v1/auth/login', async (req, res) => {
     }
     if (!valid) return res.status(401).json({ error: 'Invalid email or password.' });
     if (!row.tenant_id && row.role !== 'system_admin') return res.status(403).json({ error: 'Your account is not assigned to a hospital.' });
-    const user = { id: row.id, name: row.name, email: row.email, tenantId: row.tenant_id, role: row.role };
+    const subscription = await getSubscriptionSummary(row.tenant_id);
+    const user = { id: row.id, name: row.name, email: row.email, tenantId: row.tenant_id, role: row.role, subscription };
     setSessionCookie(res, { ...user, sessionVersion: row.session_version });
     res.json({ user });
   } catch (err: any) {
@@ -161,7 +221,8 @@ app.get('/api/v1/auth/me', async (req, res) => {
     const row = result.rows[0];
     if (Number(row.session_version) !== session.version) return res.status(401).json({ error: 'Session ended because your hospital access changed. Sign in again.' });
     if (!row.tenant_id && row.role !== 'system_admin') return res.status(403).json({ error: 'Your account is not assigned to a hospital.' });
-    res.json({ user: { id: row.id, name: row.name, email: row.email, tenantId: row.tenant_id, role: row.role } });
+    const subscription = await getSubscriptionSummary(row.tenant_id);
+    res.json({ user: { id: row.id, name: row.name, email: row.email, tenantId: row.tenant_id, role: row.role, subscription } });
   } catch { res.status(503).json({ error: 'Could not verify the current session.' }); }
 });
 
@@ -335,6 +396,14 @@ app.get('/api/v1/tenants', async (req, res) => {
   }
 });
 
+app.get('/api/v1/subscription/current', async (req, res) => {
+  try {
+    res.json({ subscription: await getSubscriptionSummary(currentUser(req).tenantId) });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Could not load the hospital subscription.', message: err.message });
+  }
+});
+
 app.post('/api/v1/tenants', async (req, res) => {
   try {
     if (currentUser(req).role !== 'system_admin') return res.status(403).json({ error: 'System administrator access required.' });
@@ -371,15 +440,143 @@ app.get('/api/v1/system-admin/user-hospital-mappings', async (req, res) => {
   } catch (err: any) { res.status(500).json({ error: 'Failed to load hospital mappings', message: err.message }); }
 });
 
+app.get('/api/v1/system-admin/subscriptions', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  try {
+    const [plansResult, tenants] = await Promise.all([
+      getDbPool().query('SELECT id, code, name, annual_price_usd, max_users, annual_report_limit, is_active FROM subscription_plans ORDER BY annual_price_usd'),
+      getTenantsFromDb()
+    ]);
+    const plans = plansResult.rows.map(row => ({
+      id: row.id, code: row.code, name: row.name,
+      annualPriceUsd: Number(row.annual_price_usd),
+      maxUsers: row.max_users === null ? null : Number(row.max_users),
+      annualReportLimit: row.annual_report_limit === null ? null : Number(row.annual_report_limit),
+      isActive: row.is_active
+    }));
+    const hospitals = await Promise.all(tenants.map(async tenant => ({
+      tenantId: tenant.id,
+      hospitalName: tenant.name,
+      subscription: await getSubscriptionSummary(tenant.id)
+    })));
+    res.json({ plans, hospitals });
+  } catch (err: any) { res.status(500).json({ error: 'Could not load subscription plans.', message: err.message }); }
+});
+
+app.put('/api/v1/system-admin/plans/:id', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  const { annualPriceUsd, maxUsers, annualReportLimit, isActive } = req.body;
+  const validLimit = (value: unknown) => value === null || (Number.isInteger(value) && Number(value) > 0);
+  if (!Number.isFinite(Number(annualPriceUsd)) || Number(annualPriceUsd) < 0 || !validLimit(maxUsers) || !validLimit(annualReportLimit) || typeof isActive !== 'boolean') {
+    return res.status(400).json({ error: 'Enter a valid annual price and positive limits, or leave a limit unlimited.' });
+  }
+  try {
+    if (maxUsers !== null) {
+      const overLimit = await getDbPool().query(`
+        SELECT t.name, COUNT(u.id)::int AS count
+        FROM hospital_subscriptions hs
+        JOIN tenants t ON t.id = hs.tenant_id
+        LEFT JOIN app_users u ON u.tenant_id = hs.tenant_id AND u.role <> 'system_admin'
+        WHERE hs.plan_id = $1
+        GROUP BY t.id, t.name
+        HAVING COUNT(u.id) > $2
+        LIMIT 1
+      `, [req.params.id, maxUsers]);
+      if (overLimit.rows[0]) return res.status(409).json({ error: `${overLimit.rows[0].name} has ${overLimit.rows[0].count} users and exceeds the proposed ${maxUsers}-user limit.` });
+    }
+    const result = await getDbPool().query(`
+      UPDATE subscription_plans SET annual_price_usd = $1, max_users = $2, annual_report_limit = $3,
+        is_active = $4, updated_at = NOW()
+      WHERE id = $5
+      RETURNING id, code, name, annual_price_usd, max_users, annual_report_limit, is_active
+    `, [Number(annualPriceUsd), maxUsers, annualReportLimit, isActive, req.params.id]);
+    const row = result.rows[0];
+    if (!row) return res.status(404).json({ error: 'Subscription plan not found.' });
+    res.json({ plan: {
+      id: row.id, code: row.code, name: row.name, annualPriceUsd: Number(row.annual_price_usd),
+      maxUsers: row.max_users === null ? null : Number(row.max_users),
+      annualReportLimit: row.annual_report_limit === null ? null : Number(row.annual_report_limit),
+      isActive: row.is_active
+    } });
+  } catch (err: any) { res.status(500).json({ error: 'Could not update the subscription plan.', message: err.message }); }
+});
+
+app.put('/api/v1/system-admin/hospitals/:id/subscription', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  const planId = typeof req.body.planId === 'string' ? req.body.planId : '';
+  if (!planId) return res.status(400).json({ error: 'Select a subscription plan.' });
+  const client = await getDbPool().connect();
+  try {
+    await client.query('BEGIN');
+    const tenantResult = await client.query('SELECT id FROM tenants WHERE id = $1', [req.params.id]);
+    if (!tenantResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Hospital not found.' });
+    }
+    const planResult = await client.query('SELECT id, max_users FROM subscription_plans WHERE id = $1 AND is_active = TRUE FOR SHARE', [planId]);
+    if (!planResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Active subscription plan not found.' });
+    }
+    const maxUsers = planResult.rows[0].max_users;
+    const usersResult = await client.query("SELECT COUNT(*)::int AS count FROM app_users WHERE tenant_id = $1 AND role <> 'system_admin'", [req.params.id]);
+    if (maxUsers !== null && Number(usersResult.rows[0].count) > Number(maxUsers)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `This hospital already has ${usersResult.rows[0].count} users. Reassign users before selecting a plan with a ${maxUsers}-user limit.` });
+    }
+    await client.query(`
+      INSERT INTO hospital_subscriptions (id, tenant_id, plan_id, status, current_period_start, current_period_end, reports_used, assigned_by)
+      VALUES ($1, $2, $3, 'ACTIVE', NOW(), NOW() + INTERVAL '1 year', 0, $4)
+      ON CONFLICT (tenant_id) DO UPDATE SET plan_id = EXCLUDED.plan_id, status = 'ACTIVE',
+        current_period_start = NOW(), current_period_end = NOW() + INTERVAL '1 year', reports_used = 0,
+        assigned_by = EXCLUDED.assigned_by, updated_at = NOW()
+    `, [`sub-${randomBytes(12).toString('hex')}`, req.params.id, planId, currentUser(req).id]);
+    await client.query('COMMIT');
+    res.json({ subscription: await getSubscriptionSummary(req.params.id) });
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    res.status(500).json({ error: 'Could not assign the subscription plan.', message: err.message });
+  } finally {
+    client.release();
+  }
+});
+
 app.put('/api/v1/system-admin/users/:id/hospital', async (req, res) => {
   if (!isSystemAdmin(req, res)) return;
   const { tenantId } = req.body;
   if (!tenantId) return res.status(400).json({ error: 'Select a hospital for this account.' });
+  const client = await getDbPool().connect();
   try {
-    const result = await getDbPool().query("UPDATE app_users SET tenant_id = $1, session_version = session_version + 1 WHERE id = $2 AND role <> 'system_admin' RETURNING id, name, email, role, tenant_id", [tenantId, req.params.id]);
-    if (!result.rows[0]) return res.status(404).json({ error: 'User not found.' });
+    await client.query('BEGIN');
+    const userResult = await client.query("SELECT id, tenant_id FROM app_users WHERE id = $1 AND role <> 'system_admin' FOR UPDATE", [req.params.id]);
+    if (!userResult.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found.' });
+    }
+    if (userResult.rows[0].tenant_id !== tenantId) {
+      const subscriptionResult = await client.query(`
+        SELECT hs.status, hs.current_period_end, p.max_users
+        FROM hospital_subscriptions hs JOIN subscription_plans p ON p.id = hs.plan_id
+        WHERE hs.tenant_id = $1 FOR UPDATE OF hs
+      `, [tenantId]);
+      const subscription = subscriptionResult.rows[0];
+      if (!subscription || subscription.status !== 'ACTIVE' || new Date(subscription.current_period_end) <= new Date()) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Assign an active subscription plan to the hospital before adding users.' });
+      }
+      const usersResult = await client.query("SELECT COUNT(*)::int AS count FROM app_users WHERE tenant_id = $1 AND role <> 'system_admin'", [tenantId]);
+      if (subscription.max_users !== null && Number(usersResult.rows[0].count) >= Number(subscription.max_users)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `The hospital has reached the ${subscription.max_users}-user limit for its subscription plan.` });
+      }
+    }
+    const result = await client.query("UPDATE app_users SET tenant_id = $1, session_version = session_version + 1 WHERE id = $2 RETURNING id, name, email, role, tenant_id", [tenantId, req.params.id]);
+    await client.query('COMMIT');
     res.json({ user: result.rows[0] });
-  } catch (err: any) { res.status(400).json({ error: 'Could not assign user to hospital.', message: err.message }); }
+  } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    res.status(400).json({ error: 'Could not assign user to hospital.', message: err.message });
+  } finally { client.release(); }
 });
 
 // ==========================================
@@ -620,20 +817,49 @@ app.get('/api/v1/documents/:id', async (req, res) => {
 });
 
 app.post('/api/v1/documents', async (req, res) => {
+  const client = await getDbPool().connect();
   try {
     const { patient, templateId, modality, accessionNumber, referringPhysician, observations, previousDocumentId } = req.body;
     const tenantId = currentUser(req).tenantId!;
+    await client.query('BEGIN');
+    const subscriptionResult = await client.query(`
+      SELECT hs.status, hs.current_period_start, hs.current_period_end, hs.reports_used, p.annual_report_limit
+      FROM hospital_subscriptions hs JOIN subscription_plans p ON p.id = hs.plan_id
+      WHERE hs.tenant_id = $1 FOR UPDATE OF hs
+    `, [tenantId]);
+    const subscription = subscriptionResult.rows[0];
+    if (!subscription) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'No subscription plan is assigned to this hospital. Contact the system administrator.' });
+    }
+    if (subscription.status !== 'ACTIVE' || new Date(subscription.current_period_end) <= new Date()) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'The hospital subscription is expired or inactive. Contact the system administrator to renew it.' });
+    }
+    const periodReports = await client.query('SELECT COUNT(*)::int AS count FROM clinical_documents WHERE tenant_id = $1 AND created_at >= $2', [tenantId, subscription.current_period_start]);
+    const reportsUsed = Math.max(Number(subscription.reports_used), Number(periodReports.rows[0].count));
+    const reportLimit = subscription.annual_report_limit === null ? null : Number(subscription.annual_report_limit);
+    if (reportLimit !== null && reportsUsed >= reportLimit) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: `This hospital has reached its annual limit of ${reportLimit.toLocaleString()} reports. Upgrade or renew the subscription to create more reports.` });
+    }
     
     let defaultPatient = patient;
     if (useDatabaseDataMode && patient?.id) {
       const patientRes = await getDbPool().query('SELECT id FROM patients WHERE id = $1 AND tenant_id = $2', [patient.id, tenantId]);
-      if (patientRes.rows.length === 0) return res.status(403).json({ error: 'Patient is not assigned to your hospital.' });
+      if (patientRes.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Patient is not assigned to your hospital.' });
+      }
     }
     if (previousDocumentId) {
       const previousRes = useDatabaseDataMode
         ? await getDocumentByIdFromDb(previousDocumentId, tenantId)
         : HISTORICAL_DOCUMENTS.find(doc => doc.id === previousDocumentId && doc.tenantId === tenantId);
-      if (!previousRes) return res.status(403).json({ error: 'Previous study is not assigned to your hospital.' });
+      if (!previousRes) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Previous study is not assigned to your hospital.' });
+      }
     }
     if (!defaultPatient && useDatabaseDataMode) {
       const patients = await getPatientsFromDb(tenantId);
@@ -665,12 +891,15 @@ app.post('/api/v1/documents', async (req, res) => {
     };
 
     const created = useDatabaseDataMode ? await saveDocumentToDb(newDoc) : newDoc;
+    await client.query('UPDATE hospital_subscriptions SET reports_used = $1, updated_at = NOW() WHERE tenant_id = $2', [reportsUsed + 1, tenantId]);
+    await client.query('COMMIT');
     await logAudit(created.id, 'System API', 'CREATED', `Clinical document created for ${created.patient.name} (${created.templateName}).`, created.tenantId);
 
-    res.status(201).json({ document: created });
+    res.status(201).json({ document: created, subscription: await getSubscriptionSummary(tenantId) });
   } catch (err: any) {
+    await client.query('ROLLBACK').catch(() => undefined);
     res.status(500).json({ error: 'Failed to create document', message: err.message });
-  }
+  } finally { client.release(); }
 });
 
 app.put('/api/v1/documents/:id', async (req, res) => {

@@ -48,12 +48,14 @@ import { PdfReportPreview } from './components/PdfReportPreview';
 import { HospitalMappings } from './components/HospitalMappings';
 import { ReportingView } from './components/ReportingView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
+import { SubscriptionManagement } from './components/SubscriptionManagement';
 import { AppDispatch, RootState } from './store';
-import { clearCurrentTenant, setCurrentTenant } from './store/tenantSlice';
+import { clearCurrentTenant, setCurrentSubscription, setCurrentTenant } from './store/tenantSlice';
 
 export default function App() {
   const dispatch = useDispatch<AppDispatch>();
   const selectedTenant = useSelector((state: RootState) => state.tenant.currentTenant);
+  const subscription = useSelector((state: RootState) => state.tenant.subscription);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [tenants, setTenants] = useState<HospitalTenant[]>(SAMPLE_TENANTS);
@@ -116,6 +118,7 @@ export default function App() {
     async function initData() {
       setLoading(true);
       setTenantLoadError('');
+      dispatch(setCurrentSubscription(authUser.subscription || null));
       try {
         const [tenantsData, practData, patData, tmplData, docsData, dsConfig] = await Promise.all([
           getTenants().catch(err => {
@@ -219,7 +222,8 @@ export default function App() {
         previousDocumentId: hist ? hist.id : undefined
       };
 
-      const newDoc = await createDocument(payload);
+      const { document: newDoc, subscription } = await createDocument(payload);
+      dispatch(setCurrentSubscription(subscription));
       setDocuments(prev => [newDoc, ...prev]);
       setActiveDocument(newDoc);
       setActiveTab('studio');
@@ -367,6 +371,7 @@ export default function App() {
         onToggleDataSource={handleToggleDataSource}
         isAdmin={authUser.role === 'admin'}
         isSystemAdmin={authUser.role === 'system_admin'}
+        subscription={subscription}
         userName={authUser.name}
         onLogout={handleLogout}
         onChangePassword={() => setShowChangePassword(true)}
@@ -454,6 +459,10 @@ export default function App() {
 
         {activeTab === 'user-hospital-mapping' && authUser.role === 'system_admin' && (
           <HospitalMappings onMappingComplete={handleLogout} />
+        )}
+
+        {activeTab === 'subscriptions' && authUser.role === 'system_admin' && (
+          <SubscriptionManagement />
         )}
 
         {activeTab === 'settings' && selectedTenant && (

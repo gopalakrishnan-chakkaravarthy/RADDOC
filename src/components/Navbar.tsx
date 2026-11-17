@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { HospitalTenant } from "../types";
+import { SubscriptionSummary } from "../services/api";
 import {
   FileText,
   Activity,
@@ -20,6 +21,7 @@ import {
   Printer,
   LogOut,
   KeyRound,
+  CreditCard,
 } from "lucide-react";
 
 interface NavbarProps {
@@ -39,6 +41,7 @@ interface NavbarProps {
   onToggleDataSource?: () => void;
   isAdmin?: boolean;
   isSystemAdmin?: boolean;
+  subscription?: SubscriptionSummary | null;
   userName?: string;
   onLogout?: () => void;
   onChangePassword?: () => void;
@@ -57,6 +60,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onToggleDataSource,
   isAdmin = false,
   isSystemAdmin = false,
+  subscription,
   userName,
   onLogout,
   onChangePassword,
@@ -76,6 +80,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         { id: "audit", label: "Audit Trail", icon: History },
         { id: "settings", label: "Hospital & Doctors", icon: Building2 },
         { id: "user-hospital-mapping", label: "User & Hospital Mapping", icon: Building2 },
+        { id: "subscriptions", label: "Subscriptions", icon: CreditCard },
       ]
     : standardNavItems;
 
@@ -174,6 +179,16 @@ export const Navbar: React.FC<NavbarProps> = ({
             <ShieldCheck className="w-3.5 h-3.5" />
             FHIR R4
           </div>
+
+          {!isSystemAdmin && (
+            <div className={`hidden lg:block rounded-md border px-2.5 py-1 text-[10px] font-semibold whitespace-nowrap ${
+              !subscription || subscription.status !== 'ACTIVE'
+                ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                : 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200'
+            }`}>
+              {subscription ? `${subscription.plan.name} · ${subscription.reportsUsed.toLocaleString()}/${subscription.plan.annualReportLimit?.toLocaleString() ?? '∞'} reports` : 'No active plan'}
+            </div>
+          )}
 
           <button
             type="button"
