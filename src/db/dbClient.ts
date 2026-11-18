@@ -7,7 +7,6 @@ import pg from 'pg';
 import { dbConfig } from './config';
 import { ClinicalDocument, HospitalTenant, Practitioner, Patient, TemplateDefinition, AuditLogEntry } from '../types';
 import { SAMPLE_TENANTS, SAMPLE_PRACTITIONERS, SAMPLE_PATIENTS, HISTORICAL_DOCUMENTS } from '../data/sampleData';
-import { RADIOLOGY_TEMPLATES } from '../data/templates';
 
 const { Pool } = pg;
 
@@ -328,9 +327,6 @@ export async function getTemplatesFromDb(modality?: string): Promise<TemplateDef
   }
   query += ' ORDER BY name ASC';
   const res = await client.query(query, params);
-  if (res.rows.length === 0) {
-    return RADIOLOGY_TEMPLATES;
-  }
   return res.rows.map(row => ({
     id: row.id,
     name: row.name,
@@ -372,6 +368,11 @@ export async function saveTemplateToDb(tmpl: TemplateDefinition): Promise<Templa
     description: row.description || '',
     fields: typeof row.fields_json === 'string' ? JSON.parse(row.fields_json) : row.fields_json
   };
+}
+
+export async function deleteTemplateFromDb(id: string): Promise<boolean> {
+  const result = await getDbPool().query('DELETE FROM templates WHERE id = $1', [id]);
+  return (result.rowCount ?? 0) > 0;
 }
 
 // ==========================================

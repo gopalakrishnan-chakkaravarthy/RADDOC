@@ -29,6 +29,36 @@ export interface SubscriptionManagementData {
   hospitals: Array<{ tenantId: string; hospitalName: string; subscription: SubscriptionSummary | null }>;
 }
 
+export interface SubscriptionReportRow {
+  id: string;
+  tenantId: string;
+  hospitalName: string;
+  subscriptionId: string;
+  planId: string;
+  planName: string;
+  patient: { name?: string; patientId?: string; phone?: string };
+  templateName: string;
+  modality: string;
+  studyDate: string;
+  accessionNumber: string;
+  status: string;
+}
+
+export interface SubscriptionReportData {
+  plans: Array<{ id: string; code: string; name: string }>;
+  hospitals: Array<{ tenant_id: string; hospital_name: string; plan_id: string; plan_name: string }>;
+  reports: SubscriptionReportRow[];
+}
+
+export async function getSubscriptionReport(filters: { tenantId?: string; planId?: string; from?: string; to?: string } = {}): Promise<SubscriptionReportData> {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([key, value]) => { if (value) params.set(key, value); });
+  const response = await apiFetch(`${API_BASE}/system-admin/subscription-report?${params.toString()}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Could not load subscription report.');
+  return data;
+}
+
 async function authRequest<T>(path: string, body?: Record<string, string>): Promise<T> {
   const response = await fetch(`${API_BASE}/auth/${path}`, {
     method: body ? 'POST' : 'GET',
@@ -286,6 +316,23 @@ export async function getTemplates(modality?: string): Promise<TemplateDefinitio
   const res = await apiFetch(url);
   const data = await res.json();
   return data.templates || [];
+}
+
+export async function saveTemplate(template: TemplateDefinition): Promise<TemplateDefinition> {
+  const res = await apiFetch(`${API_BASE}/templates`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(template)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not save template.');
+  return data.template;
+}
+
+export async function deleteTemplate(id: string): Promise<void> {
+  const res = await apiFetch(`${API_BASE}/templates/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Could not delete template.');
 }
 
 export async function getDocuments(tenantId?: string): Promise<ClinicalDocument[]> {

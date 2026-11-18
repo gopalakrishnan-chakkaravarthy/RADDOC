@@ -22,6 +22,8 @@ import {
   LogOut,
   KeyRound,
   CreditCard,
+  FileCog,
+  BarChart3,
 } from "lucide-react";
 
 interface NavbarProps {
@@ -73,15 +75,18 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: "comparison", label: "Previous Study Compare", icon: GitCompare },
     { id: "reporting", label: "Reporting", icon: ClipboardList },
   ];
-  const navItems = isSystemAdmin
-    ? [
+  const systemAdminNavItems = [
         { id: "fhir", label: "FHIR & DICOM SR", icon: FileText },
         { id: "api", label: "Developer API Explorer", icon: Code2 },
         { id: "audit", label: "Audit Trail", icon: History },
         { id: "settings", label: "Hospital & Doctors", icon: Building2 },
         { id: "user-hospital-mapping", label: "User & Hospital Mapping", icon: Building2 },
         { id: "subscriptions", label: "Subscriptions", icon: CreditCard },
-      ]
+        { id: "templates", label: "Templates", icon: FileCog },
+        { id: "subscription-report", label: "Subscription Report", icon: BarChart3 },
+      ];
+  const navItems = isSystemAdmin
+    ? [...standardNavItems, ...systemAdminNavItems]
     : standardNavItems;
 
   const handleTabClick = (id: string) => {
@@ -234,9 +239,9 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
       </div>
 
-      {/* Desktop Navigation Tabs Bar (Horizontal Scroll Protected) */}
+      {/* Desktop Navigation Tabs Bar */}
       <div className="hidden md:block bg-slate-950/60 border-t border-slate-800/80">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center gap-1.5 overflow-x-auto py-1.5 text-sm no-scrollbar scroll-smooth">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-wrap items-center gap-1.5 py-1.5 text-sm">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = activeTab === item.id;

@@ -49,6 +49,8 @@ import { HospitalMappings } from './components/HospitalMappings';
 import { ReportingView } from './components/ReportingView';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { SubscriptionManagement } from './components/SubscriptionManagement';
+import { TemplateManagement } from './components/TemplateManagement';
+import { SubscriptionReporting } from './components/SubscriptionReporting';
 import { AppDispatch, RootState } from './store';
 import { clearCurrentTenant, setCurrentSubscription, setCurrentTenant } from './store/tenantSlice';
 
@@ -138,7 +140,7 @@ export default function App() {
         ));
         if (practData && practData.length > 0) setPractitioners(practData);
         setPatients(patData || []);
-        if (tmplData && tmplData.length > 0) setTemplates(tmplData);
+        setTemplates(tmplData || []);
         setDocuments(docsData || []);
         const reportIdFromPath = window.location.pathname.match(/^\/reports\/([^/]+)\/?$/)?.[1];
         let initialDocument = docsData?.[0] || null;
@@ -463,6 +465,14 @@ export default function App() {
 
         {activeTab === 'subscriptions' && authUser.role === 'system_admin' && (
           <SubscriptionManagement />
+        )}
+
+        {activeTab === 'templates' && authUser.role === 'system_admin' && (
+          <TemplateManagement templates={templates} onChanged={setTemplates} />
+        )}
+
+        {activeTab === 'subscription-report' && authUser.role === 'system_admin' && (
+          <SubscriptionReporting />
         )}
 
         {activeTab === 'settings' && selectedTenant && (

@@ -23,6 +23,7 @@ import {
   deletePatientFromDb,
   getTemplatesFromDb,
   saveTemplateToDb,
+  deleteTemplateFromDb,
   getDocumentsFromDb,
   getDocumentByIdFromDb,
   saveDocumentToDb,
@@ -267,8 +268,9 @@ app.use('/api/v1', async (req, res, next) => {
     (req as any).authUser = { id: result.rows[0].id, name: result.rows[0].name, email: result.rows[0].email, tenantId: result.rows[0].tenant_id, role: result.rows[0].role };
     if (result.rows[0].role === 'system_admin') {
       const isManagementRoute = req.path.startsWith('/system-admin') || req.path.startsWith('/tenants') || req.path.startsWith('/practitioners');
+      const isSystemAdminTemplateWrite = req.path.startsWith('/templates') && req.method !== 'GET';
       const isReadOnlyClinicalRoute = req.method === 'GET' && ['/documents', '/templates', '/audit-logs'].some(prefix => req.path === prefix || req.path.startsWith(`${prefix}/`));
-      if (!isManagementRoute && !isReadOnlyClinicalRoute) {
+      if (!isManagementRoute && !isReadOnlyClinicalRoute && !isSystemAdminTemplateWrite) {
         return res.status(403).json({ error: 'This system admin account does not have access to that API.' });
       }
     }
@@ -281,6 +283,7 @@ app.use('/api/v1', async (req, res, next) => {
 
 // Active Data Source State Flag (Default: true for Database Mode)
 let useDatabaseDataMode = true;
+let sampleTemplates = [...RADIOLOGY_TEMPLATES];
 
 async function logAudit(documentId: string, actor: string, action: string, details: string, tenantId: string = 'tenant-xyz-hospital') {
   if (useDatabaseDataMode) {
@@ -461,6 +464,43 @@ app.get('/api/v1/system-admin/subscriptions', async (req, res) => {
     })));
     res.json({ plans, hospitals });
   } catch (err: any) { res.status(500).json({ error: 'Could not load subscription plans.', message: err.message }); }
+});
+
+app.get('/api/v1/system-admin/subscription-report', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  const { tenantId, planId, from, to } = req.query;
+  const validDate = (value: unknown) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+  if ((from && !validDate(from)) || (to && !validDate(to))) return res.status(400).json({ error: 'Use valid dates in YYYY-MM-DD format.' });
+  if (from && to && String(from) > String(to)) return res.status(400).json({ error: 'The start date must be on or before the end date.' });
+  try {
+    const params: unknown[] = [];
+    const filters: string[] = [];
+    if (tenantId) { params.push(String(tenantId)); filters.push(`hs.tenant_id = $${params.length}`); }
+    if (planId) { params.push(String(planId)); filters.push(`hs.plan_id = $${params.length}`); }
+    if (from) { params.push(String(from)); filters.push(`d.study_date >= $${params.length}::date`); }
+    if (to) { params.push(String(to)); filters.push(`d.study_date < ($${params.length}::date + INTERVAL '1 day')`); }
+    const [plans, hospitals, reports] = await Promise.all([
+      getDbPool().query('SELECT id, code, name FROM subscription_plans ORDER BY annual_price_usd'),
+      getDbPool().query(`SELECT t.id AS tenant_id, t.name AS hospital_name, hs.plan_id, p.name AS plan_name
+        FROM hospital_subscriptions hs JOIN tenants t ON t.id = hs.tenant_id JOIN subscription_plans p ON p.id = hs.plan_id
+        ORDER BY t.name`),
+      getDbPool().query(`SELECT d.id, d.tenant_id, t.name AS hospital_name, hs.id AS subscription_id, hs.plan_id,
+          p.name AS plan_name, d.patient_json, d.template_name, d.modality, d.study_date, d.accession_number, d.status
+        FROM clinical_documents d
+        JOIN tenants t ON t.id = d.tenant_id
+        JOIN hospital_subscriptions hs ON hs.tenant_id = d.tenant_id
+        JOIN subscription_plans p ON p.id = hs.plan_id
+        ${filters.length ? `WHERE ${filters.join(' AND ')}` : ''}
+        ORDER BY t.name, d.study_date DESC`, params)
+    ]);
+    res.json({ plans: plans.rows, hospitals: hospitals.rows, reports: reports.rows.map(row => ({
+      id: row.id, tenantId: row.tenant_id, hospitalName: row.hospital_name,
+      subscriptionId: row.subscription_id, planId: row.plan_id, planName: row.plan_name,
+      patient: typeof row.patient_json === 'string' ? JSON.parse(row.patient_json) : row.patient_json,
+      templateName: row.template_name, modality: row.modality, studyDate: row.study_date,
+      accessionNumber: row.accession_number, status: row.status
+    })) });
+  } catch (err: any) { res.status(500).json({ error: 'Could not load subscription report.', message: err.message }); }
 });
 
 app.put('/api/v1/system-admin/plans/:id', async (req, res) => {
@@ -677,7 +717,7 @@ app.delete('/api/v1/patients/:id', async (req, res) => {
 app.get('/api/v1/templates', async (req, res) => {
   try {
     const { modality } = req.query;
-    const templates = useDatabaseDataMode ? await getTemplatesFromDb(modality as string) : RADIOLOGY_TEMPLATES;
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb(modality as string) : sampleTemplates.filter(template => !modality || template.modality === String(modality).toUpperCase());
     res.json({ count: templates.length, templates });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to fetch templates', message: err.message });
@@ -686,7 +726,7 @@ app.get('/api/v1/templates', async (req, res) => {
 
 app.get('/api/v1/templates/:id', async (req, res) => {
   try {
-    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : sampleTemplates;
     const template = templates.find(t => t.id === req.params.id);
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });
@@ -694,6 +734,43 @@ app.get('/api/v1/templates/:id', async (req, res) => {
     res.json({ template });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to fetch template', message: err.message });
+  }
+});
+
+app.put('/api/v1/templates', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  const template = req.body;
+  if (!template || typeof template.id !== 'string' || !template.id.trim() || typeof template.name !== 'string' || !template.name.trim() || !Array.isArray(template.fields)) {
+    return res.status(400).json({ error: 'Template id, name, and fields are required.' });
+  }
+  if (useDatabaseDataMode) {
+    try {
+      const saved = await saveTemplateToDb(template);
+      return res.json({ template: saved });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'Failed to save template', message: err.message });
+    }
+  }
+  const index = sampleTemplates.findIndex(item => item.id === template.id);
+  if (index >= 0) sampleTemplates[index] = template;
+  else sampleTemplates = [...sampleTemplates, template];
+  res.json({ template });
+});
+
+app.delete('/api/v1/templates/:id', async (req, res) => {
+  if (!isSystemAdmin(req, res)) return;
+  try {
+    if (useDatabaseDataMode) {
+      const success = await deleteTemplateFromDb(req.params.id);
+      if (!success) return res.status(404).json({ error: 'Template not found.' });
+    } else {
+      const existingCount = sampleTemplates.length;
+      sampleTemplates = sampleTemplates.filter(item => item.id !== req.params.id);
+      if (sampleTemplates.length === existingCount) return res.status(404).json({ error: 'Template not found.' });
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to delete template', message: err.message });
   }
 });
 
@@ -790,10 +867,11 @@ app.put('/api/v1/invoices/:id', async (req, res) => {
 app.get('/api/v1/documents', async (req, res) => {
   try {
     const { patientId, status } = req.query;
-    const tenantId = currentUser(req).tenantId!;
+    const user = currentUser(req);
+    const tenantId = user.role === 'system_admin' ? undefined : user.tenantId!;
     const docs = useDatabaseDataMode 
-      ? await getDocumentsFromDb(tenantId as string, patientId as string, status as string)
-      : HISTORICAL_DOCUMENTS.filter(doc => doc.tenantId === tenantId);
+      ? await getDocumentsFromDb(tenantId, patientId as string, status as string)
+      : HISTORICAL_DOCUMENTS.filter(doc => !tenantId || doc.tenantId === tenantId);
     res.json({ count: docs.length, documents: docs });
   } catch (err: any) {
     res.status(500).json({ error: 'Failed to fetch documents', message: err.message });
@@ -802,7 +880,8 @@ app.get('/api/v1/documents', async (req, res) => {
 
 app.get('/api/v1/documents/:id', async (req, res) => {
   try {
-    const tenantId = currentUser(req).tenantId!;
+    const user = currentUser(req);
+    const tenantId = user.role === 'system_admin' ? undefined : user.tenantId!;
     const doc = useDatabaseDataMode
       ? await getDocumentByIdFromDb(req.params.id, tenantId)
       : HISTORICAL_DOCUMENTS.find(d => d.id === req.params.id && d.tenantId === tenantId);
@@ -866,7 +945,7 @@ app.post('/api/v1/documents', async (req, res) => {
       defaultPatient = patients[0] || SAMPLE_PATIENTS[0];
     }
 
-    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : sampleTemplates;
     const template = templates.find(t => t.id === templateId);
     const templateName = template ? template.name : 'Radiology Study';
 
@@ -940,7 +1019,7 @@ app.post('/api/v1/documents/:id/generate', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+    const templates = useDatabaseDataMode ? await getTemplatesFromDb() : sampleTemplates;
     const template = templates.find(t => t.id === doc.templateId);
     const templateName = template ? template.name : doc.templateName;
 
@@ -1122,7 +1201,7 @@ app.post('/api/v1/voice/parse', async (req, res) => {
     return res.status(400).json({ error: 'dictationText is required' });
   }
 
-  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : sampleTemplates;
   const template = templates.find(t => t.id === templateId) || templates[0];
 
   try {
@@ -1140,7 +1219,7 @@ app.post('/api/v1/chat', async (req, res) => {
     return res.status(400).json({ error: 'message is required' });
   }
 
-  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : RADIOLOGY_TEMPLATES;
+  const templates = useDatabaseDataMode ? await getTemplatesFromDb() : sampleTemplates;
   const template = templates.find(t => t.id === templateId) || templates[0];
   const tenantId = currentUser(req).tenantId!;
   const doc = document?.id
